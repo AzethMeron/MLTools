@@ -2,6 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from typing import Callable, List, Optional, Sequence, Union
+from .ConvBlocks import ConvolutionalBlock, DepthwiseConvolutionalBlock, PointwiseConvolutionalBlock, DepthwiseSeparableConvolution, Bottleneck, CSP1_X, CSP2_X
 
 # ---- tiny helpers ------------------------------------------------------------
 
