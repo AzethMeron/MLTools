@@ -553,10 +553,11 @@ class MLP(nn.Module):
                 if verbose:
                     tqdm.write("Early stopping.")
                 break
-
-        # Restore best weights (and thresholds buffer) if we have them
-        if best_state is not None:
-            self.load_state_dict(best_state)
+				
+        with torch.inference_mode():
+            # Restore best weights (and thresholds buffer) if we have them
+            if best_state is not None:
+                self.load_state_dict(best_state)
 
         # Remember how multiclass thresholds were handled for predict()
         self._learn_multiclass_thresholds_flag = bool(learn_multiclass_thresholds)
