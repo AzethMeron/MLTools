@@ -1,0 +1,2 @@
+TinyImageNet_ResNet50_train.bin filter=lfs diff=lfs merge=lfs -text
+TinyImageNet_ResNet50_val.bin filter=lfs diff=lfs merge=lfs -text
