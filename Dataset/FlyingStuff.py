@@ -68,6 +68,7 @@ import torch
 import torch.nn.functional as F
 import torchvision
 from torchvision import transforms as T
+import tqdm
 
 # ================================================================
 # Core data contracts
@@ -457,8 +458,31 @@ def background_layer(bg: Image.Image, canvas_hw: Tuple[int,int]) -> Layer:
     return Layer(tex=tex, alpha=alpha, A1=A1, A2=A2, z=-1.0, pad_mode='border')
 
 
+import torch
+import torch.nn.functional as F
+
 @torch.no_grad()
-def render_pair_and_flow(layers: List[Layer], canvas_hw: Tuple[int,int], device: torch.device):
+def render_pair_and_flow(
+    layers: List[Layer],
+    canvas_hw: Tuple[int,int],
+    device: torch.device,
+    *,
+    min_motion_px: float | None = None,
+    max_motion_px: float | None = None,
+    motion_percentile: float = 80.0,
+    apply_to_background: bool = False,
+):
+    """
+    Render (img1, img2) and forward flow with optional motion bounds.
+    Motion bounds are enforced PER LAYER by rescaling the relative affine A_delta = A2 @ inv(A1)
+    so that the chosen percentile of |A2·uv - A1·uv| on visible pixels falls within [min,max].
+
+    Args:
+        min_motion_px: if set, ensure motion >= this (approx.) for each object
+        max_motion_px: if set, ensure motion <= this (approx.) for each object
+        motion_percentile: which percentile of per-pixel motion to enforce (e.g., 80)
+        apply_to_background: also enforce bounds for the background layer
+    """
     Hc, Wc = canvas_hw
     layers = sorted(layers, key=lambda L: L.z)
 
@@ -468,40 +492,121 @@ def render_pair_and_flow(layers: List[Layer], canvas_hw: Tuple[int,int], device:
     vis2 = -torch.ones(Hc, Wc, dtype=torch.long, device=device)
     local_uv1 = torch.full((2, Hc, Wc), float('nan'), device=device)
 
-    yy, xx = torch.meshgrid(torch.arange(Hc, device=device), torch.arange(Wc, device=device), indexing='ij')
+    yy, xx = torch.meshgrid(torch.arange(Hc, device=device),
+                            torch.arange(Wc, device=device), indexing='ij')
     canvas_xy = torch.stack([xx, yy], dim=0).float()
+
+    def _enforce_bounds_on_layer_A2(A1_3x3: torch.Tensor,
+                                    A2_3x3: torch.Tensor,
+                                    uv_vis: torch.Tensor,  # (N,2) in layer-local pixels
+                                   ):
+        """Rescale relative affine so chosen motion percentile lies in [min,max]."""
+        needs_bounds = (min_motion_px is not None) or (max_motion_px is not None)
+        if (not needs_bounds) or (uv_vis.numel() == 0):
+            return A2_3x3
+
+        # Compute current per-pixel displacement magnitudes
+        xy1 = apply_affine_to_points(A1_3x3[:2, :], uv_vis)    # (N,2)
+        xy2 = apply_affine_to_points(A2_3x3[:2, :], uv_vis)    # (N,2)
+        disp = xy2 - xy1                                       # (N,2)
+        mag = torch.linalg.norm(disp, dim=1)                   # (N,)
+
+        # Percentile statistic
+        p = float(motion_percentile) / 100.0
+        stat = torch.quantile(mag, torch.tensor(p, device=mag.device)) if mag.numel() > 0 else torch.tensor(0.0, device=mag.device)
+        stat = float(stat.item())
+        if stat <= 0.0:
+            # If absolutely no motion but min>0 requested, inject a tiny translation
+            if (min_motion_px is not None) and (min_motion_px > 0):
+                A_delta = A2_3x3 @ torch.linalg.inv(A1_3x3)
+                # add a small translation in a random direction
+                angle = torch.rand(1).item() * 2*math.pi
+                tx = min_motion_px * math.cos(angle)
+                ty = min_motion_px * math.sin(angle)
+                A_delta_adj = A_delta.clone()
+                A_delta_adj[0,2] += tx
+                A_delta_adj[1,2] += ty
+                return A_delta_adj @ A1_3x3
+            return A2_3x3
+
+        # Compute scale factor alpha to bring percentile into [min,max]
+        alpha = 1.0
+        if (min_motion_px is not None) and (stat < min_motion_px):
+            alpha = max(alpha, (min_motion_px / max(stat, 1e-6)))
+        if (max_motion_px is not None) and (stat > max_motion_px):
+            alpha = min(alpha, (max_motion_px / max(stat, 1e-6)))
+        if abs(alpha - 1.0) < 1e-6:
+            return A2_3x3
+
+        # Rescale relative affine: A_delta = A2 @ inv(A1)
+        A_delta = A2_3x3 @ torch.linalg.inv(A1_3x3)
+        M = A_delta[:2, :2]
+        t = A_delta[:2, 2]
+
+        I2 = torch.eye(2, dtype=M.dtype, device=M.device)
+        M_adj = I2 + alpha * (M - I2)   # linear blend of linear part
+        t_adj = alpha * t               # scale translation
+
+        A_delta_adj = torch.eye(3, dtype=M.dtype, device=M.device)
+        A_delta_adj[:2, :2] = M_adj
+        A_delta_adj[:2, 2] = t_adj
+
+        return A_delta_adj @ A1_3x3
 
     for lid, L in enumerate(layers):
         tex = L.tex.to(device)
         alpha = L.alpha.to(device)
         Hl, Wl = tex.shape[1:]
 
-        theta1 = to_affine_grid_theta(L.A1, (Wl, Hl), (Hc, Wc))
-        grid1 = F.affine_grid(theta1.unsqueeze(0), size=(1, 3, Hc, Wc), align_corners=True)
-        samp_tex1 = F.grid_sample(tex.unsqueeze(0), grid1, mode='bilinear', padding_mode=L.pad_mode, align_corners=True)[0]
-        samp_a1 = F.grid_sample(alpha.unsqueeze(0), grid1, mode='bilinear', padding_mode=L.pad_mode, align_corners=True)[0]
+        theta1 = to_affine_grid_theta(L.A1, (Wl, Hl), (Hc, Wc)).to(device)
+        grid1 = F.affine_grid(theta1.unsqueeze(0), size=(1, 3, Hc, Wc), align_corners=True).to(device)
+        samp_tex1 = F.grid_sample(tex.unsqueeze(0), grid1, mode='bilinear',
+                                  padding_mode=L.pad_mode, align_corners=True)[0]
+        samp_a1 = F.grid_sample(alpha.unsqueeze(0), grid1, mode='bilinear',
+                                padding_mode=L.pad_mode, align_corners=True)[0]
         m1 = (samp_a1[0] > 0.5)
         I1[:, m1] = samp_tex1[:, m1]
-        newpix = m1
-        vis1[newpix] = lid
+        vis1[m1] = lid
 
-        # coordinate texture in layer space
+        # Layer-local coordinates at frame1
         u = torch.linspace(0, Wl - 1, Wl, device=device).view(1, 1, Wl).expand(1, Hl, Wl)
         v = torch.linspace(0, Hl - 1, Hl, device=device).view(1, Hl, 1).expand(1, Hl, Wl)
         uv = torch.cat([u, v], dim=0)
-        samp_uv1 = F.grid_sample(uv.unsqueeze(0), grid1, mode='bilinear', padding_mode=L.pad_mode, align_corners=True)[0]
+        samp_uv1 = F.grid_sample(uv.unsqueeze(0), grid1, mode='bilinear',
+                                 padding_mode=L.pad_mode, align_corners=True)[0]
+        # store local coords for visible pixels (topmost overwrite already in effect)
         for c in range(2):
-            tmp = local_uv1[c]; tmp[newpix] = samp_uv1[c][newpix]; local_uv1[c] = tmp
+            tmp = local_uv1[c]; tmp[m1] = samp_uv1[c][m1]; local_uv1[c] = tmp
 
-        theta2 = to_affine_grid_theta(L.A2, (Wl, Hl), (Hc, Wc))
-        grid2 = F.affine_grid(theta2.unsqueeze(0), size=(1, 3, Hc, Wc), align_corners=True)
-        samp_tex2 = F.grid_sample(tex.unsqueeze(0), grid2, mode='bilinear', padding_mode=L.pad_mode, align_corners=True)[0]
-        samp_a2 = F.grid_sample(alpha.unsqueeze(0), grid2, mode='bilinear', padding_mode=L.pad_mode, align_corners=True)[0]
+        # --- Enforce motion bounds on this layer (skip background unless requested) ---
+        is_bg = (L.z <= -0.5)  # background we set to z=-1.0 earlier
+        if (apply_to_background or not is_bg) and ((min_motion_px is not None) or (max_motion_px is not None)):
+            # visible uv points only for this layer
+            uv_vis = samp_uv1[:, m1].T  # (N,2) in layer-local pixels
+            # Make sure A1/A2 are 3x3 on device
+            A1_3 = L.A1.to(device)
+            if A1_3.shape == (2,3):
+                A1t = torch.eye(3, dtype=A1_3.dtype, device=device); A1t[:2,:3] = A1_3; A1_3 = A1t
+            A2_3 = L.A2.to(device)
+            if A2_3.shape == (2,3):
+                A2t = torch.eye(3, dtype=A2_3.dtype, device=device); A2t[:2,:3] = A2_3; A2_3 = A2t
+
+            A2_3_new = _enforce_bounds_on_layer_A2(A1_3, A2_3, uv_vis)
+            # write back (keep 3x3)
+            L.A2 = A2_3_new.detach().cpu()
+
+        # Now sample frame2 with (possibly) adjusted A2
+        theta2 = to_affine_grid_theta(L.A2, (Wl, Hl), (Hc, Wc)).to(device)
+        grid2 = F.affine_grid(theta2.unsqueeze(0), size=(1, 3, Hc, Wc), align_corners=True).to(device)
+        samp_tex2 = F.grid_sample(tex.unsqueeze(0), grid2, mode='bilinear',
+                                  padding_mode=L.pad_mode, align_corners=True)[0]
+        samp_a2 = F.grid_sample(alpha.unsqueeze(0), grid2, mode='bilinear',
+                                padding_mode=L.pad_mode, align_corners=True)[0]
         m2 = (samp_a2[0] > 0.5)
         I2[:, m2] = samp_tex2[:, m2]
-        newpix2 = m2
-        vis2[newpix2] = lid
+        vis2[m2] = lid
 
+    # ---- Compute forward flow + valid (same as before, with adjusted A2) ----
     flow = torch.zeros(2, Hc, Wc, device=device)
     valid = torch.zeros(Hc, Wc, dtype=torch.bool, device=device)
 
@@ -511,7 +616,6 @@ def render_pair_and_flow(layers: List[Layer], canvas_hw: Tuple[int,int], device:
             continue
         uv = local_uv1[:, mask_l].T
         xy2 = apply_affine_to_points(L.A2.to(device)[:2, :], uv)
-        # Use *analytic* xy1 from A1 (avoids small inconsistencies vs. raster coords)
         xy1_calc = apply_affine_to_points(L.A1.to(device)[:2, :], uv)
         disp = (xy2 - xy1_calc).T
         flow[:, mask_l] = disp
@@ -524,6 +628,7 @@ def render_pair_and_flow(layers: List[Layer], canvas_hw: Tuple[int,int], device:
         valid[mask_l] = (inside & same_layer)
 
     return I1.cpu(), I2.cpu(), flow.cpu(), valid.cpu()
+
 
 
 # ================================================================
@@ -620,6 +725,8 @@ def synthesize_dataset(
     fg_pool: WeightedPool,
     seed: int = 1234,
     preview: int = 0,
+    min_motion_px: float | None = None,
+    max_motion_px: float | None = None
 ):
     set_seed(seed)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -638,7 +745,7 @@ def synthesize_dataset(
             fg = fg_ds.get_random()
             layers.append(random_object_layer(fg, (H, W)))
 
-        I1, I2, flow, valid = render_pair_and_flow(layers, (H, W), device)
+        I1, I2, flow, valid = render_pair_and_flow(layers, (H, W), device, max_motion_px = max_motion_px, min_motion_px = min_motion_px)
 
         base = f"{idx:06d}"
         save_png(I1, os.path.join(split_dir, f"{base}_img1.png"))
@@ -667,12 +774,10 @@ def synthesize_dataset(
     train_ids: List[str] = []
     val_ids: List[str] = []
     total = num_train + num_val
-    for i in range(1, total + 1):
+    for i in tqdm.tqdm([ _x for _x in range(1, total + 1)]):
         split_dir = train_dir if i <= num_train else val_dir
         base = one_example(i, split_dir)
         (train_ids if i <= num_train else val_ids).append(base)
-        if i % 50 == 0:
-            print(f"Generated {i}/{total}")
 
     with open(os.path.join(out_root, 'train.txt'), 'w') as f:
         f.write('\n'.join(train_ids))
