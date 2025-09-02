@@ -1,9 +1,16 @@
 import os
 import json
+from pathlib import Path
+import copy
+import urllib
+
+import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
+
 from Detections import Detection
-from pathlib import Path
+from DataProcessing import Letterbox
+from Misc import SaveBin, LoadBin
 
 class COCO(Dataset):
     def __init__(self, image_dir, annotation_path, class_mapper):
@@ -77,9 +84,6 @@ class COCO(Dataset):
       
       return train_path, val_path, anno_path
 
-
-from torch.utils.data import Dataset
-from PIL import Image
 class SimpleDataset(Dataset):
     def __init__(self, data, root_path): # [(image_name, dets), ...]
         self.data = data
@@ -92,17 +96,11 @@ class SimpleDataset(Dataset):
         image = Image.open(image_path).convert("RGB")
         return image, detections
 
-from torch.utils.data import Dataset, DataLoader
-import numpy as np
-import copy
-import os
-import shutil
-
 class DetectionDataset(Dataset):
     def __init__(self,
                  dataset,
                  class_mapper,
-                 image_size=(480, 480), # Desired image size. (W, H)
+                 image_size=(640, 480), # Desired image size. (W, H)
                  augmentation = None, # Must take in pillow image and return pillow image. Can't resize, rotate, translate nor flip the image (or do anything else that would mess up the bounding boxes)
                  horizontal_flip = None, # Can be either None or single number (chance)
                  vertical_flip = None, # Can be either None or single number (chance)
@@ -110,6 +108,8 @@ class DetectionDataset(Dataset):
                  translate_w = None, # Translation given in percentage (0-1). Can be None, single number (Random(-x,x)) or two numbers (Random(x1, x2))
                  translate_h = None, # Translation given in percentage (0-1). Can be None, single number (Random(-x,x)) or two numbers (Random(x1, x2))
                  generate_once = False, # Use only for validation set. Upon creation it stores images in memory and it never augments them again.
+                 device = "cpu", # Used by build-in image transformers
+                 fill = (114, 114, 114), # Used by build-in image transformers
                  ):
         self.dataset = dataset
         self.image_size = image_size
@@ -121,6 +121,8 @@ class DetectionDataset(Dataset):
         self.translate_h = translate_h
         self.stats = None # stats[class_id] = count
         self.class_mapper = class_mapper
+        self.transformer = Letterbox(image_size, fill=fill, device = device)
+        self.fill = fill
         self.__pregenerated = self.__pregenerate() if generate_once else None
 
     def __get_augmented_data(self, idx):
@@ -158,17 +160,19 @@ class DetectionDataset(Dataset):
         if dy: dy = dy * H
 
         # Processing image
-        image = image.resize(self.image_size, Image.BILINEAR)  # (W, H)
+        #image = image.resize(self.image_size, Image.BILINEAR)  # (W, H)
         if self.augmentation: image = self.augmentation(image)
+        image = self.transformer(image)
         if do_flip_h: image = image.transpose(Image.FLIP_LEFT_RIGHT)
         if do_flip_v: image = image.transpose(Image.FLIP_TOP_BOTTOM)
-        if angle: image = image.rotate(-angle, expand=False)
-        image = image.transform(image.size, Image.AFFINE, (1, 0, -dx, 0, 1, -dy))
+        if angle: image = image.rotate(-angle, expand=False, fillcolor=self.fill)
+        image = image.transform(image.size, Image.AFFINE, (1, 0, -dx, 0, 1, -dy), fillcolor=self.fill)
 
         # Processing detections
         detections = []
         for detection in raw_detections:
-          detection = detection.Rescale((orig_W, orig_H), (W, H))
+          #detection = detection.Rescale((orig_W, orig_H), (W, H))
+          detection = self.transformer.transform_detections( [detection], (orig_W, orig_H) )[0]
           if do_flip_h:
             detection = detection.HorizontalFlip(W)
           if do_flip_v:

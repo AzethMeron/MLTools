@@ -13,7 +13,7 @@ def read_requirements(path: Path) -> list[str]:
     ]
 
 HERE = Path(__file__).parent
-install_requires = read_requirements(os.path.join(HERE, "requirements.txt"))
+install_requires = read_requirements(Path(os.path.join(HERE, "requirements.txt")))
 
 setup(
     name="MLTools",
