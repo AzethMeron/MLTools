@@ -137,17 +137,17 @@ class SqueezeExciteBlock(nn.Module):
         return x * w  # broadcast across H×W
 
 class FastBottleneck(nn.Module):
-    def __init__(self, channels, bottleneck_ratio=0.5, upscale_spatial_convolution=False, shortcut=True, activation=nn.SiLU(inplace=True)):
+    def __init__(self, channels, bottleneck_ratio=0.5, upscale_spatial_convolution=False, shortcut=True, activation=nn.SiLU(inplace=True), padding_mode = "replicate"):
         super(FastBottleneck, self).__init__()
         bottleneck = max(1, int(bottleneck_ratio * channels))
         self.downscale = nn.Sequential(
-            nn.Conv2d(channels, bottleneck, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.Conv2d(channels, bottleneck, kernel_size=3, stride=1, padding=1, bias=False, padding_mode = padding_mode),
             nn.BatchNorm2d(bottleneck),
             copy.deepcopy(activation),
         )
         self.upscale = nn.Sequential(
-            nn.Conv2d(bottleneck, channels, kernel_size=3, stride=1, padding=1, bias=False) if upscale_spatial_convolution
-                else nn.Conv2d(bottleneck, channels, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.Conv2d(bottleneck, channels, kernel_size=3, stride=1, padding=1, bias=False, padding_mode=padding_mode) if upscale_spatial_convolution
+                else nn.Conv2d(bottleneck, channels, kernel_size=1, stride=1, padding=0, bias=False, padding_mode=padding_mode),
             nn.BatchNorm2d(channels),
         )
         self.se = SqueezeExciteBlock(channels)
