@@ -95,10 +95,11 @@ class DepthwiseSeparableConvolution(nn.Module):
         return x
 
 
-class Bottleneck(nn.Module):
+class LegacyBottleneck(nn.Module): # Only to be used with old code
     def __init__(self, input_channels, bottleneck_channels, output_channels, repeats=1, bias=False, activation=None,
                  shortcut=False, norm=None):
-        super(Bottleneck, self).__init__()
+        super(LegacyBottleneck, self).__init__()
+        print("Using LegacyBottleneck, which is deprecated and will be removed in future releases. Consider switching to FastBottleneck")
         self.downscaling = PointwiseConvolutionalBlock(input_channels, bottleneck_channels, bias=bias,
                                                        norm=norm) if input_channels != bottleneck_channels else nn.Identity()
         processing_layers = [
@@ -161,6 +162,28 @@ class FastBottleneck(nn.Module):
         x = self.se(x)
         x = x + residual if self.shortcut else x
         return self.activation(x)
+
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False,
+                 padding_mode="replicate", activation=nn.SiLU(inplace=True), norm=None, groups=1):
+        super(ResidualBlock, self).__init__()
+        self.conv_block = nn.Sequential(
+            ConvolutionalBlock(in_channels, out_channels, kernel_size, stride, padding, dilation, bias, padding_mode, activation, norm, groups),
+            ConvolutionalBlock(out_channels, out_channels, kernel_size, 1, padding, 1, bias, padding_mode, nn.Identity(), norm, groups)
+        )
+        self.se = SqueezeExciteBlock(out_channels)
+        self.projection = ConvolutionalBlock(in_channels, out_channels, 1, stride, 0, 1, bias, padding_mode, nn.Identity(), norm, 1) if (in_channels != out_channels or stride != 1) else nn.Identity()
+        if norm is None:
+            nn.init.constant_(self.projection.bn.weight, 1.0)
+            nn.init.constant_(self.projection.bn.bias, 0.0)
+        self.activation = copy.deepcopy(activation)
+    def forward(self, x):
+        residual = self.projection(x)
+        x = self.conv_block(x)
+        x = self.se(x)
+        x = x + residual
+        x = self.activation(x)
+        return x
 
 class CSP1_X(nn.Module):
     def __init__(self, input_channels, working_channels, output_channels, X=1, bias=False, activation=None, norm=None):
