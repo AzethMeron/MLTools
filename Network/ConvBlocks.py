@@ -95,11 +95,11 @@ class DepthwiseSeparableConvolution(nn.Module):
         return x
 
 
-class LegacyBottleneck(nn.Module): # Only to be used with old code
+class Bottleneck(nn.Module): # Only to be used with old code
     def __init__(self, input_channels, bottleneck_channels, output_channels, repeats=1, bias=False, activation=None,
                  shortcut=False, norm=None):
-        super(LegacyBottleneck, self).__init__()
-        print("Using LegacyBottleneck, which is deprecated and will be removed in future releases. Consider switching to FastBottleneck")
+        super(Bottleneck, self).__init__()
+        print("Using legacy bottleneck, which is deprecated and will be removed in future releases. Consider switching to FastBottleneck")
         self.downscaling = PointwiseConvolutionalBlock(input_channels, bottleneck_channels, bias=bias,
                                                        norm=norm) if input_channels != bottleneck_channels else nn.Identity()
         processing_layers = [
