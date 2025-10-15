@@ -1,5 +1,5 @@
 
-from Misc import LoadBin
+from MLTools.Utilities import LoadBin
 
 from torch.utils.data import Dataset
 from pathlib import Path

@@ -4,9 +4,6 @@ from PIL import Image
 import torch
 import torch.nn.functional as F
 
-from Detections import Detection
-
-
 # ----------------------------------------------------
 # Torch-backed Letterbox transform (PIL -> PIL)
 # ----------------------------------------------------
@@ -78,13 +75,14 @@ class Letterbox:
       return self(pil_img)
 
     def transform_detections(self,
-                            detections: List[Detection],
-                            orig_size: Tuple[int, int]) -> List[Detection]:
+                            detections,
+                            orig_size: Tuple[int, int]):
         """
         Adjust detections (CXCYWH) for letterboxed resize.
         - orig_size: (W,H) before resize
         - new_size: (W,H) canvas after letterbox
         """
+        from MLTools import Detection
         ow, oh = orig_size
         tw, th = self.tw, self.th
 

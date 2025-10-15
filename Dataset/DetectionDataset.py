@@ -8,12 +8,12 @@ import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 
-from Detections import Detection
-from DataProcessing import Letterbox
-from Misc import SaveBin, LoadBin
+from MLTools.DataProcessing import Letterbox
+from MLTools.Utilities import SaveBin, LoadBin
 
 class COCO(Dataset):
     def __init__(self, image_dir, annotation_path, class_mapper):
+        from Detections import Detection
         self.image_dir = image_dir
 
         # Load annotations
