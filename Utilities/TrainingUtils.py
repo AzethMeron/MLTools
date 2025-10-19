@@ -186,11 +186,17 @@ class TrainingLoop:
             pass
         return None
     
-    def post_epoch(self, epoch): # Called at the very end of each epoch - if you want something to happen then, it's good idea to put it there
-        pass
+    def post_epoch(self, history): 
+        # Called at the very end of each epoch - if you want something to happen then, it's good idea to put it there
+        # History is a list of dictionaries
+        # Every element in that list contains keys 'epoch':int, 'train_loss':float, 'test_loss':float, 'train_metrics':None|custom, 'test_metrics':None|custom
+        # Return expression that is booleaned into True to stop the training. Useful for early-stopping
+        # If None or False is returned, training goes on.
+        last_epoch = history[-1]
+        epoch = last_epoch['epoch']
         
     def print_epoch_results(self, epoch, train_loss, train_metrics, test_loss, test_metrics):
-        print(f"Epoch {epoch+1}: train_loss={train_loss:.3f}, test_loss={test_loss:.3f}")
+        print(f"Epoch {epoch+1}: train_loss={train_loss:.4f}, test_loss={test_loss:.4f}")
         
     def update_pbar(self, loop, mode, epoch, avg_loss, recent_loss):
         loop.set_postfix(mode=mode, epoch=epoch, running_loss=recent_loss, loss=avg_loss)
@@ -270,4 +276,4 @@ class TrainingLoop:
             if self.checkpoint_path: self.save_checkpoint(self.checkpoint_path)
             self.print_epoch_results(epoch, train_loss, train_metrics, test_loss, test_metrics)
             
-            self.post_epoch(epoch)
+            if self.post_epoch(self.history): return None

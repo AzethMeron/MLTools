@@ -12,3 +12,11 @@ def LoadBin(path):
         data = f.read()
         data = zlib.decompress(data)
         return pickle.loads(data)
+        
+def SaveDump(obj):
+    data = pickle.dumps(obj)
+    return zlib.compress(data)
+
+def LoadDump(data):
+    data = zlib.decompress(data)
+    return pickle.loads(data)
