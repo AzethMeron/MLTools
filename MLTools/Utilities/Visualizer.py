@@ -217,7 +217,7 @@ class Visualizer:
     def loss_chart(self, history):
         epochs = [ entry['epoch'] for entry in history ]
         train_losses = [ entry['train_loss'] for entry in history ]
-        test_losses = entry['test_loss'] for entry in history
+        test_losses = [ entry['test_loss'] for entry in history ]
         return self.multi_line(series = {'train loss': train_losses, 'test loss': test_loss}, x = epochs)
     
     # ---------- Convert to PIL ----------
