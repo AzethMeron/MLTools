@@ -276,4 +276,7 @@ class TrainingLoop:
             if self.checkpoint_path: self.save_checkpoint(self.checkpoint_path)
             self.print_epoch_results(epoch, train_loss, train_metrics, test_loss, test_metrics)
             
-            if self.post_epoch(self.history): return None
+            try:
+                if self.post_epoch(self.history): return None
+            except Exception as e:
+                print(f"{type(e)} occured during post_epoch execution: {str(e)}")
