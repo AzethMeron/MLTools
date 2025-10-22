@@ -33,7 +33,7 @@ class FastConv2d(nn.Conv2d):
             )  # [B, C_in*kH*kW, L]
 
             B, Ckk, L = patches.shape
-            H_out, W_out = out.shape[2], out.shape[3]
+            H_out, W_out = out.shape[-2:]
             assert L == H_out * W_out, "unfold length must match conv spatial size"
 
             shared_feats = (
