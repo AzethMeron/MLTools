@@ -7,49 +7,53 @@ class FastConv2d(nn.Conv2d):
     Identical conv output to nn.Conv2d, plus returns shared receptive-field features.
     Forward returns:
       out: [B, C_out, H_out, W_out]
-      shared_feats: [B, H_out, W_out, C_in_per_group*kH*kW]  (detached, CPU)
+      shared_feats: [B, H_out, W_out, C_in*kH*kW]  (detached, CPU)
     """
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, include_features: bool = False):
+        # Keep gradients for the real convolution
         out = F.conv2d(
             x, self.weight, self.bias,
             self.stride, self.padding, self.dilation, self.groups
         )
+        
+        if not include_features: return out, None
 
-        # Unfold to collect receptive fields for all (y,x)
-        kH, kW = self.kernel_size if isinstance(self.kernel_size, tuple) else (self.kernel_size, self.kernel_size)
-        dH, dW = self.dilation if isinstance(self.dilation, tuple) else (self.dilation, self.dilation)
-        pH, pW = self.padding if isinstance(self.padding, tuple) else (self.padding, self.padding)
-        sH, sW = self.stride if isinstance(self.stride, tuple) else (self.stride, self.stride)
+        # Everything below runs without gradient tracking
+        with torch.no_grad():
+            # These are already tuples in nn.Conv2d, but normalize anyway for safety
+            kH, kW = self.kernel_size if isinstance(self.kernel_size, tuple) else (self.kernel_size, self.kernel_size)
+            dH, dW = self.dilation if isinstance(self.dilation, tuple) else (self.dilation, self.dilation)
+            pH, pW = self.padding if isinstance(self.padding, tuple) else (self.padding, self.padding)
+            sH, sW = self.stride if isinstance(self.stride, tuple) else (self.stride, self.stride)
 
-        patches = F.unfold(
-            x, kernel_size=(kH, kW), dilation=(dH, dW),
-            padding=(pH, pW), stride=(sH, sW)   # [B, C_in*kH*kW, L]
-        )
+            patches = F.unfold(
+                x, kernel_size=(kH, kW), dilation=(dH, dW),
+                padding=(pH, pW), stride=(sH, sW)
+            )  # [B, C_in*kH*kW, L]
 
-        B, Ckk, L = patches.shape
-        H_out, W_out = out.shape[2], out.shape[3]
+            B, Ckk, L = patches.shape
+            H_out, W_out = out.shape[2], out.shape[3]
+            assert L == H_out * W_out, "unfold length must match conv spatial size"
 
-        shared_feats = (patches.transpose(1, 2)         # [B, L, Ckk]
-                                .contiguous()
-                                .view(B, H_out, W_out, Ckk)
-                                .detach()
-                                .cpu())
+            shared_feats = (
+                patches.detach().transpose(1, 2)     # [B, L, C_in*kH*kW]
+                .reshape(B, H_out, W_out, Ckk)       # [B, H_out, W_out, C_in*kH*kW]
+                .cpu()
+            )
+
         return out, shared_feats
 
     @torch.no_grad()
-    def class_from_shared(
+    def features_for_class_from_shared(
         self,
-        shared_feats: torch.Tensor,          # [B, H, W, Ckk]  (detached, CPU)
-        class_id: int,
-        return_contributions: bool = False,  # False -> scores [B,H,W]; True -> per-element contribs [B,H,W,Ckk_group]
-        add_bias: bool = True
+        shared_feats: torch.Tensor,          # [B, H, W, C_in*kH*kW] (detached, CPU)
+        class_id: int
     ):
         """
-        Compute either logits (dot + bias) or per-element contributions for a given class_id
-        from CPU 'shared_feats'. Handles grouped convs by slicing the correct input slice.
+        Get features used to compute score for class with class_id, extracting
+        from 'shared_feats'. Handles grouped convs by slicing the correct input slice.
         """
-        assert shared_feats.device.type == "cpu", "shared_feats must be on CPU (as produced by forward)."
         assert shared_feats.ndim == 4, "shared_feats must have shape [B, H, W, Ckk]."
 
         B, H, W, Ckk = shared_feats.shape
@@ -71,21 +75,4 @@ class FastConv2d(nn.Conv2d):
 
         feats_g = shared_feats[..., start:end]     # [B, H, W, Cg_vec]
 
-        # Get that class's weight vector for the same group slice
-        w = (self.weight[class_id]                # [Cg_in, kH, kW]
-             .detach().cpu().reshape(-1))        # [Cg_vec]
-
-        if return_contributions:
-            # Elementwise contributions per position (no bias):
-            # [B,H,W,Cg_vec] where sum over last dim equals the pre-bias logit
-            return feats_g * w                   # stays on CPU
-
-        # Compute logits efficiently: flatten spatial, matmul, reshape
-        FH = feats_g.reshape(B * H * W, Cg_vec)   # [BHW, Cg_vec]
-        scores = FH @ w                            # [BHW]
-        scores = scores.view(B, H, W)              # [B,H,W]
-
-        if add_bias and (self.bias is not None):
-            scores += float(self.bias[class_id].detach().cpu())
-
-        return scores
+        return feats_g
