@@ -5,7 +5,7 @@ from torch import nn
 class FastConv2d(nn.Conv2d):
     """
     Identical conv output to nn.Conv2d, plus returns shared receptive-field features.
-    Forward returns:
+    Forward returns out or (out, shared_feats) if include_features=True:
       out: [B, C_out, H_out, W_out]
       shared_feats: [B, H_out, W_out, C_in*kH*kW]  (detached, CPU)
     """
@@ -17,7 +17,7 @@ class FastConv2d(nn.Conv2d):
             self.stride, self.padding, self.dilation, self.groups
         )
         
-        if not include_features: return out, None
+        if not include_features: return out
 
         # Everything below runs without gradient tracking
         with torch.no_grad():
