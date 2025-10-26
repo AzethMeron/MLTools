@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from typing import Callable, List, Optional, Sequence, Union
-from .ConvBlocks import ConvolutionalBlock, DepthwiseConvolutionalBlock, PointwiseConvolutionalBlock, DepthwiseSeparableConvolution, Bottleneck, CSP1_X, CSP2_X
+from .ConvBlocks import ConvolutionalBlock, PointwiseConvolutionalBlock, CSP1_X, CSP2_X
 
 # ---- tiny helpers ------------------------------------------------------------
 
@@ -104,11 +104,13 @@ class GenericFPN(nn.Module):
             elif self.fuse_type == "concat":
                 self.proj_from_top.append(nn.Identity())
                 self.fuse_modules.append(reduce_factory(ch_i + ch_top, ch_i))
-            else:  # 'csp'
+            elif self.fuse_type == "csp":  # 'csp'
                 self.proj_from_top.append(nn.Identity())
                 self.fuse_modules.append(
                     CSP1_X(input_channels=ch_i + ch_top, working_channels=ch_i, output_channels=ch_i, X=2)
                 )
+            else:
+                raise RuntimeError(f"Encountered unsupported fuse type in internal code {self.fuse_type}")
 
             if self.smooth_flag == "3x3":
                 self.post_smooth.append(default_smooth_factory(ch_i))
