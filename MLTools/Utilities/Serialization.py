@@ -1,5 +1,6 @@
 import pickle
 import zlib
+import os
 
 def SaveBin(path, obj):
     with open(path, "wb") as f:
@@ -20,3 +21,11 @@ def SaveDump(obj):
 def LoadDump(data):
     data = zlib.decompress(data)
     return pickle.loads(data)
+
+def LoadOrCompute( path, func ):
+  if os.path.exists(path):
+    return LoadBin(path)
+  else:
+    result = func()
+    SaveBin(path, result)
+    return result

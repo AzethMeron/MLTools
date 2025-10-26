@@ -1,4 +1,4 @@
-from .Serialization import SaveBin, LoadBin, SaveDump, LoadDump
+from .Serialization import SaveBin, LoadBin, SaveDump, LoadDump, LoadOrCompute
 from .Cosmetics import SciNotation, CountParameters
 from .Convertion import PilToOpenCV, OpenCVToPil
 from .ClassMapper import ClassMapper

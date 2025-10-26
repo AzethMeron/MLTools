@@ -126,6 +126,11 @@ class Detection:
       return pil_image
 
     def ToXYXY(self):
+      import warnings
+      warnings.warn("Using old syntax", DeprecationWarning)
+      return self.to_xyxy()
+
+    def to_xyxy(self):
       # Convert to axis-aligned bounding box in xyxy format
       corners = self.RotatedCorners()
       xs = [p[0] for p in corners]
@@ -134,10 +139,16 @@ class Detection:
 
     @staticmethod
     def ToSupervision(detections):
+      import warnings
+      warnings.warn("Using old syntax", DeprecationWarning)
+      return Detections.to_supervision(detections)
+    
+    @staticmethod
+    def to_supervision(detections):
       import supervision as sv
-      if type(detections) == list and type(detections[0]) == list: return [ det.ToSupervision() for det in detections ]
+      if type(detections) == list and type(detections[0]) == list: return [ det.to_supervision() for det in detections ]
       return sv.Detections(
-          xyxy=np.array([det.ToXYXY() for det in detections]),
+          xyxy=np.array([det.to_xyxy() for det in detections]),
           confidence=np.array([det.confidence for det in detections]),
           class_id=np.array([det.class_id for det in detections])
           )
@@ -159,7 +170,7 @@ class Detection:
       from torchvision.ops import nms
       if not detections:
         return []
-      boxes = torch.tensor([det.ToXYXY() for det in detections], dtype=torch.float32)
+      boxes = torch.tensor([det.to_xyxy() for det in detections], dtype=torch.float32)
       scores = torch.tensor([det.confidence for det in detections], dtype=torch.float32)
       keep_indices = nms(boxes, scores, iou_threshold).tolist()
       return [detections[i] for i in keep_indices]
@@ -178,7 +189,7 @@ class Detection:
     def IOU(self, other):
         import torch
         from torchvision.ops import box_iou
-        box1 = torch.tensor([self.ToXYXY()])
-        box2 = torch.tensor([other.ToXYXY()])
+        box1 = torch.tensor([self.to_xyxy()])
+        box2 = torch.tensor([other.to_xyxy()])
         iou = box_iou(box1, box2).item()
         return iou
