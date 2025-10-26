@@ -8,7 +8,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from conv2d_with_features import FastConv2d
+from conv2d_with_features import Conv2dWithFeatures
 
 torch.manual_seed(0)
 random.seed(0)

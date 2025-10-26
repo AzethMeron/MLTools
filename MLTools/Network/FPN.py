@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from typing import Callable, List, Optional, Sequence, Union
-from .ConvBlocks import ConvolutionalBlock, PointwiseConvolutionalBlock, CSP1_X, CSP2_X
+from .Layers import ConvNormAct, PureConv, CSP1_X
 
 # ---- tiny helpers ------------------------------------------------------------
 
@@ -16,15 +16,16 @@ def _to_list(v: Union[int, Sequence[int]], n: int) -> List[int]:
 
 # Default lateral 1x1 conv (matches your original: no activation on laterals)
 def default_lateral_factory(in_c: int, out_c: int) -> nn.Module:
-    return PointwiseConvolutionalBlock(in_c, out_c, activation=nn.Identity())
+    # linear 1x1 (no norm/act)
+    return PureConv(in_c, out_c, kernel_size=1, bias=False)
 
 # Default “reduce after concat” block: simple 3×3 ConvNormAct
 def default_reduce_factory(in_c: int, out_c: int) -> nn.Module:
-    return ConvolutionalBlock(in_c, out_c, kernel_size=3, padding=1)
+    return ConvNormAct(in_c, out_c, kernel_size=3, padding=1)
 
 # Optional smoothing after fusion (3×3)
 def default_smooth_factory(ch: int) -> nn.Module:
-    return ConvolutionalBlock(ch, ch, kernel_size=3, padding=1)
+    return ConvNormAct(ch, ch, kernel_size=3, padding=1)
 
 # ---- Generic FPN -------------------------------------------------------------
 
@@ -39,7 +40,7 @@ class GenericFPN(nn.Module):
             - 'sum': elementwise sum (with per-level projection if widths differ).
             - 'concat': concat + reduce via reduce_factory.
             - 'csp': concat then CSP1_X( in=cat , work=out[i] , out=out[i] ).
-        lateral_factory: fn(in_c, out_c) -> nn.Module (default: 1×1 conv, no act).
+        lateral_factory: fn(in_c, out_c) -> nn.Module (default: 1×1 PureConv, no act).
         reduce_factory: fn(in_c, out_c) -> nn.Module used when fuse_type='concat'.
         smooth: None | '3x3' to add a post-fusion smoothing conv per level.
         upsample_mode: 'nearest' or 'bilinear'.
@@ -98,16 +99,19 @@ class GenericFPN(nn.Module):
             if self.fuse_type == "sum":
                 # If channels differ, project top to ch_i before summation.
                 self.proj_from_top.append(
-                    nn.Identity() if ch_top == ch_i else PointwiseConvolutionalBlock(ch_top, ch_i, activation=nn.Identity())
+                    nn.Identity() if ch_top == ch_i else PureConv(ch_top, ch_i, kernel_size=1, bias=False)
                 )
                 self.fuse_modules.append(nn.Identity())  # fusion is just + ; optional smoothing below
+
             elif self.fuse_type == "concat":
                 self.proj_from_top.append(nn.Identity())
                 self.fuse_modules.append(reduce_factory(ch_i + ch_top, ch_i))
-            elif self.fuse_type == "csp":  # 'csp'
+
+            elif self.fuse_type == "csp":
                 self.proj_from_top.append(nn.Identity())
+                # Concat happens in forward; CSP1_X processes channels = ch_i (working) from cat
                 self.fuse_modules.append(
-                    CSP1_X(input_channels=ch_i + ch_top, working_channels=ch_i, output_channels=ch_i, X=2)
+                    CSP1_X(input_channels=ch_i + ch_top, working_channels=ch_i, out_channels=ch_i, X=2)
                 )
             else:
                 raise RuntimeError(f"Encountered unsupported fuse type in internal code {self.fuse_type}")
@@ -132,7 +136,7 @@ class GenericFPN(nn.Module):
                 out_ch = extra_ch[j]
                 # 3x3 stride-2 conv to go down one level
                 self.extra_downsamples.append(
-                    ConvolutionalBlock(in_ch, out_ch, kernel_size=3, stride=2, padding=1)
+                    ConvNormAct(in_ch, out_ch, kernel_size=3, stride=2, padding=1)
                 )
                 in_ch = out_ch
         else:
@@ -148,6 +152,7 @@ class GenericFPN(nn.Module):
 
         # 1) Laterals
         outs = [l(f) for l, f in zip(self.lateral_convs, features)]
+
         # 2) Top-down
         for i in range(self.num_levels - 1, 0, -1):
             top = self._upsample_to(outs[i], outs[i - 1])
@@ -169,8 +174,6 @@ class GenericFPN(nn.Module):
 
         return outs
 
-from typing import List, Sequence, Optional, Union, Callable
-from torch import nn
 
 # If you kept the helpers from the GenericFPN snippet:
 # default_lateral_factory, default_reduce_factory

@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-class FastConv2d(nn.Conv2d):
+class Conv2dWithFeatures(nn.Conv2d):
     """
     Identical conv output to nn.Conv2d, plus returns shared receptive-field features.
     Forward returns out or (out, shared_feats) if include_features=True:
