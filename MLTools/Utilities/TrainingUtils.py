@@ -185,6 +185,9 @@ class TrainingLoop:
             # outputs, targets have data
             pass
         return None
+
+    def pre_epoch(self):
+        pass
     
     def post_epoch(self, history): 
         # Called at the very end of each epoch - if you want something to happen then, it's good idea to put it there
@@ -261,6 +264,8 @@ class TrainingLoop:
     def run(self, resume=True): # Don't change
         if resume and self.checkpoint_path and not self.loaded: self.load_checkpoint(self.checkpoint_path)
         for epoch in range(self.epoch, self.num_epochs):
+            self.epoch = epoch
+            self.pre_epoch()
             train_loss, train_outputs, train_targets = self._train_step(epoch)
             train_metrics = self.compute_metrics(train_outputs, train_targets)
             test_loss, test_outputs, test_targets = self._test_step(epoch)
@@ -268,7 +273,6 @@ class TrainingLoop:
             self.scheduler.step()
             
             self.history.append({'epoch':epoch, 'train_loss':train_loss, 'test_loss':test_loss, 'train_metrics':train_metrics, 'test_metrics':test_metrics})
-            self.epoch = epoch
             val = self.quantify(test_loss, test_metrics)
             if self.best_val > val:
                 self.best_val = val
