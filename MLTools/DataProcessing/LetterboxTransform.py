@@ -82,7 +82,7 @@ class Letterbox:
         - orig_size: (W,H) before resize
         - new_size: (W,H) canvas after letterbox
         """
-        from MLTools import Detection
+        from MLTools.Detections import Detection
         ow, oh = orig_size
         tw, th = self.tw, self.th
 

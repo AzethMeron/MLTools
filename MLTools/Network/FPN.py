@@ -111,7 +111,7 @@ class GenericFPN(nn.Module):
                 self.proj_from_top.append(nn.Identity())
                 # Concat happens in forward; CSP1_X processes channels = ch_i (working) from cat
                 self.fuse_modules.append(
-                    CSP1_X(input_channels=ch_i + ch_top, working_channels=ch_i, out_channels=ch_i, X=2)
+                    CSP1_X(in_channels=ch_i + ch_top, working_channels=ch_i, out_channels=ch_i, X=2)
                 )
             else:
                 raise RuntimeError(f"Encountered unsupported fuse type in internal code {self.fuse_type}")
