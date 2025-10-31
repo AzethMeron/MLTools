@@ -262,6 +262,7 @@ class TrainingLoop:
         all_targets = torch.cat(all_targets) if self.keep_outputs else None
         return avg_loss.value(), all_outputs, all_targets   
     def run(self, resume=True): # Don't change
+        self.model = self.model.to(self.device)
         if resume and self.checkpoint_path and not self.loaded: self.load_checkpoint(self.checkpoint_path)
         for epoch in range(self.epoch, self.num_epochs):
             self.epoch = epoch
