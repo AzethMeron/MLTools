@@ -13,7 +13,7 @@ from MLTools.Utilities import SaveBin, LoadBin
 
 class COCO(Dataset):
     def __init__(self, image_dir, annotation_path, class_mapper):
-        from Detections import Detection
+        from MLTools.Detections import Detection
         self.image_dir = image_dir
 
         # Load annotations

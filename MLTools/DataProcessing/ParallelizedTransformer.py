@@ -1,5 +1,5 @@
 
-import multiprocessing
+import multiprocessing as mp
 import atexit
 
 class TransformProcess(mp.Process):
