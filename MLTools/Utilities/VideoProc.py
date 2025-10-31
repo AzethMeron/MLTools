@@ -2,7 +2,7 @@ from typing import Iterable, List, Union, Optional
 import cv2
 import numpy as np
 from PIL import Image
-from Convertion import PilToOpenCV, OpenCVToPil
+from .Convertion import PilToOpenCV, OpenCVToPil
 
 class FrameReader:
     """
@@ -126,7 +126,7 @@ class FrameWriter:
     def __enter__(self):
         return self
     
-    def __exit__(self:
+    def __exit__(self, exc_type, exc, tb):
         self.close()
         
     def __del__(self):
