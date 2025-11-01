@@ -276,6 +276,7 @@ class TrainingLoop:
             self.history.append({'epoch':epoch, 'train_loss':train_loss, 'test_loss':test_loss, 'train_metrics':train_metrics, 'test_metrics':test_metrics})
             val = self.quantify(test_loss, test_metrics)
             if self.best_val > val:
+                print(f"Best value improved from {self.best_val :. 4f} to {val :. 4f}")
                 self.best_val = val
                 if self.best_path: self.save_checkpoint(self.best_path)
             if self.checkpoint_path: self.save_checkpoint(self.checkpoint_path)
