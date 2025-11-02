@@ -187,7 +187,7 @@ class TrainingLoop:
         return None
     
     def improved_val(self, old_val, new_val):
-        print(f"Best value improved from {old_val :. 4f} to {new_val :. 4f}")
+        print(f"Best value improved from {old_val:.4f} to {new_val:.4f}")
 
     def pre_epoch(self):
         pass
