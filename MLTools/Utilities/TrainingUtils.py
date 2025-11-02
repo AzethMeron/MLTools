@@ -185,6 +185,9 @@ class TrainingLoop:
             # outputs, targets have data
             pass
         return None
+    
+    def improved_val(self, old_val, new_val):
+        print(f"Best value improved from {old_val :. 4f} to {new_val :. 4f}")
 
     def pre_epoch(self):
         pass
@@ -262,6 +265,7 @@ class TrainingLoop:
         all_targets = torch.cat(all_targets) if self.keep_outputs else None
         return avg_loss.value(), all_outputs, all_targets   
     def run(self, resume=True): # Don't change
+        final_pass = False
         self.model = self.model.to(self.device)
         if resume and self.checkpoint_path and not self.loaded: self.load_checkpoint(self.checkpoint_path)
         for epoch in range(self.epoch, self.num_epochs):
@@ -275,14 +279,17 @@ class TrainingLoop:
             
             self.history.append({'epoch':epoch, 'train_loss':train_loss, 'test_loss':test_loss, 'train_metrics':train_metrics, 'test_metrics':test_metrics})
             val = self.quantify(test_loss, test_metrics)
+            
+            try:
+                if self.post_epoch(self.history): final_pass = True
+            except Exception as e:
+                print(f"{type(e)} occured during post_epoch execution: {str(e)}")
+            
             if self.best_val > val:
-                print(f"Best value improved from {self.best_val :. 4f} to {val :. 4f}")
+                self.improved_val(self.best_val, val)
                 self.best_val = val
                 if self.best_path: self.save_checkpoint(self.best_path)
             if self.checkpoint_path: self.save_checkpoint(self.checkpoint_path)
             self.print_epoch_results(epoch, train_loss, train_metrics, test_loss, test_metrics)
             
-            try:
-                if self.post_epoch(self.history): return None
-            except Exception as e:
-                print(f"{type(e)} occured during post_epoch execution: {str(e)}")
+            if final_pass: return None
