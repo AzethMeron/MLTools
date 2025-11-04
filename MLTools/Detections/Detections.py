@@ -130,7 +130,7 @@ class Detection:
       warnings.warn("Using old syntax", DeprecationWarning)
       return self.to_xyxy()
 
-    def to_xyxy(self, anchor="mean", eps_deg=5):
+    def to_xyxy(self, anchor="max", eps_deg=5):
         """
         Convert to axis-aligned bounding box in xyxy format.
         anchor = "max" (tight AABB of rotated corners),
@@ -216,7 +216,7 @@ class Detection:
       return Detections.to_supervision(detections)
     
     @staticmethod
-    def to_supervision(detections, anchor="mean"):
+    def to_supervision(detections, anchor="max"):
       import supervision as sv
       if type(detections) == list and type(detections[0]) == list: return [ det.to_supervision(det) for det in detections ]
       return sv.Detections(
@@ -237,7 +237,7 @@ class Detection:
       return output
 
     @staticmethod
-    def NaiveNMS(detections, iou_threshold=0.5, anchor="mean"): # Ignores classes
+    def NaiveNMS(detections, iou_threshold=0.5, anchor="max"): # Ignores classes
       import torch
       from torchvision.ops import nms
       if not detections:
@@ -248,7 +248,7 @@ class Detection:
       return [detections[i] for i in keep_indices]
 
     @staticmethod
-    def NMS(detections, iou_threshold=0.5, anchor="mean"): # Performs NMS on every class separately
+    def NMS(detections, iou_threshold=0.5, anchor="max"): # Performs NMS on every class separately
       classful_nms = dict()
       for det in detections:
         if det.class_id not in classful_nms: classful_nms[det.class_id] = []
@@ -258,7 +258,7 @@ class Detection:
         output.extend( Detection.NaiveNMS(classful_nms[class_id], iou_threshold, anchor=anchor) )
       return output
 
-    def IOU(self, other, anchor="mean"):
+    def IOU(self, other, anchor="max"):
         import torch
         from torchvision.ops import box_iou
         box1 = torch.tensor([self.to_xyxy(anchor=anchor)])
