@@ -131,83 +131,10 @@ class Detection:
       return self.to_xyxy()
 
     def to_xyxy(self, anchor="max", eps_deg=5):
-        """
-        Convert to axis-aligned bounding box in xyxy format.
-        anchor = "max" (tight AABB of rotated corners),
-                 "min" (largest axis-aligned rect fully inside the rotated rect), STILL BUGGY
-                 "mean" (average of the two). THIS ONE IS DECENT
-        """
-        anchor = anchor.lower()
-
-        # --- "max": tight axis-aligned bbox around rotated corners (unchanged) ---
-        corners = self.RotatedCorners()
-        xs = [p[0] for p in corners]
-        ys = [p[1] for p in corners]
-        max_tl = (min(xs), min(ys))
-        max_br = (max(xs), max(ys))
-        if anchor == "max":
-            return [*max_tl, *max_br]
-
-        cx, cy, w, h, rot_deg = self.cx, self.cy, self.w, self.h, self.rotation
-
-        # Fast path: if near 0° or 90°, min == max effectively
-        r = rot_deg % 90.0
-        if r < eps_deg or (90.0 - r) < eps_deg:
-            return [*max_tl, *max_br]
-
-        # --- "min": use the JS getCropCoordinates algorithm (ported) ---
-        ang = math.radians(rot_deg)
-
-        quadrant = (math.floor(ang / (math.pi / 2.0)) & 3)
-        sign_alpha = ang if (quadrant & 1) == 0 else (math.pi - ang)
-        # Normalize like JS: ((a % π) + π) % π
-        alpha = (sign_alpha % math.pi + math.pi) % math.pi
-
-        # Bounding box size of the rotated w×h
-        bb_w = w * math.cos(alpha) + h * math.sin(alpha)
-        bb_h = w * math.sin(alpha) + h * math.cos(alpha)
-
-        # gamma depends on aspect
-        if w < h:
-            gamma = math.atan2(bb_w, bb_h)
-        else:
-            gamma = math.atan2(bb_h, bb_w)
-
-        delta = math.pi - alpha - gamma
-
-        length = h if w < h else w  # the larger side
-        d = length * math.cos(alpha)
-        # Guard tiny sin(delta)
-        sdelta = math.sin(delta)
-        if abs(sdelta) < 1e-5:
-            # Degenerate: fall back to max box
-            return [*max_tl, *max_br]
-
-        a = d * math.sin(alpha) / sdelta
-
-        y_margin = a * math.cos(gamma)
-        x_margin = y_margin * math.tan(gamma)
-
-        inner_w = bb_w - 2.0 * x_margin
-        inner_h = bb_h - 2.0 * y_margin
-
-        # Center this inner rect at (cx, cy)
-        min_tl = (cx - inner_w / 2.0, cy - inner_h / 2.0)
-        min_br = (min_tl[0] + inner_w, min_tl[1] + inner_h)
-
-        if anchor == "min":
-            return [*min_tl, *min_br]
-
-        # --- "mean": average of max and min ---
-        if anchor == "mean":
-            return [
-                (max_tl[0] + min_tl[0]) / 2.0, (max_tl[1] + min_tl[1]) / 2.0,
-                (max_br[0] + min_br[0]) / 2.0, (max_br[1] + min_br[1]) / 2.0,
-            ]
-
-        # Default fallback
-        return [*max_tl, *max_br]
-
+      corners = self.RotatedCorners()
+      xs = [p[0] for p in corners]
+      ys = [p[1] for p in corners]
+      return [min(xs), min(ys), max(xs), max(ys)]
 
     @staticmethod
     def ToSupervision(detections):
@@ -218,7 +145,8 @@ class Detection:
     @staticmethod
     def to_supervision(detections, anchor="max"):
       import supervision as sv
-      if type(detections) == list and type(detections[0]) == list: return [ det.to_supervision(det) for det in detections ]
+      if len(detections) > 0 and isinstance(detections[0], list): return [ Detection.to_supervision(det, anchor=anchor) for det in detections ]
+      if len(detections) == 0: return sv.Detections.empty()
       return sv.Detections(
           xyxy=np.array([det.to_xyxy(anchor=anchor) for det in detections]),
           confidence=np.array([det.confidence for det in detections]),
@@ -227,7 +155,7 @@ class Detection:
 
     @staticmethod
     def from_supervision(sv_detections):
-      if type(sv_detections) == list: return [ Detection.from_supervision(det) for det in sv_detections ]
+      if isinstance(sv_detections, list): return [ Detection.from_supervision(det) for det in sv_detections ]
       import supervision as sv
       output = []
       for bbox, conf, class_id in zip(sv_detections.xyxy, sv_detections.confidence, sv_detections.class_id):
