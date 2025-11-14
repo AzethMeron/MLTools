@@ -118,7 +118,7 @@ class DelayedStorage:
 # Scheduler is called once per epoch.
 # Also I recommand setting pin_memory=True, persistent_workers=True in dataloader. However if you don't set pin_memory, remember to set non_blocking = False. By default it's set to True
 class TrainingLoop:
-    def __init__(self, model: nn.Module, optimizer, criterion, device, epochs: int, train_loop_constructor: Callable, test_loop_constructor: Callable, log_every_k: int = 10, recent_memory: int = 10, scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None, checkpoint_path: Optional[str] = None, best_path: Optional[str] = None, non_blocking: bool = True, keep_outputs = True):
+    def __init__(self, model: nn.Module, optimizer, criterion, device, epochs: int, train_loop_constructor: Callable, test_loop_constructor: Callable, log_every_k: int = 10, recent_memory: int = 10, scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None, checkpoint_path: Optional[str] = None, best_path: Optional[str] = None, non_blocking: bool = True, keep_outputs = True, min_rel_improval: float = 0.005):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler or torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1.0)
@@ -137,6 +137,7 @@ class TrainingLoop:
         self.non_blocking = non_blocking
         self.history = [] # history[epoch_id] = {'epoch', 'train_loss', 'test_loss', 'train_metrics', 'test_metrics'}
         self.keep_outputs = keep_outputs
+        self.min_rel_improval = min_rel_improval
         
     def load_checkpoint(self, path): # Sometimes it's worth to overload this function
         if os.path.isfile(path):
@@ -267,7 +268,9 @@ class TrainingLoop:
     def run(self, resume=True): # Don't change
         final_pass = False
         self.model = self.model.to(self.device)
-        if resume and self.checkpoint_path and not self.loaded: self.load_checkpoint(self.checkpoint_path)
+        if resume and self.checkpoint_path and not self.loaded: 
+            self.load_checkpoint(self.checkpoint_path)
+            print(f"Resuming training on epoch {self.epoch}. Best value: {self.best_val}")
         for epoch in range(self.epoch, self.num_epochs):
             self.epoch = epoch
             self.pre_epoch()
@@ -285,7 +288,7 @@ class TrainingLoop:
             except Exception as e:
                 print(f"{type(e)} occured during post_epoch execution: {str(e)}")
             
-            if self.best_val > val:
+            if (self.best_val * (1.0-self.min_rel_improval)) >= val:
                 self.improved_val(self.best_val, val)
                 self.best_val = val
                 if self.best_path: self.save_checkpoint(self.best_path)
