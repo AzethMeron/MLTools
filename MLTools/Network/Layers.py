@@ -172,7 +172,7 @@ class CBAM(nn.Module):
 
  
 class ResidualBlock(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, stride:int=1, dtype=torch.float32, main_branch=None, act_factory=None, norm_factory=None, kernel_size=3):
+    def __init__(self, in_channels: int, out_channels: int, stride:int=1, dtype=torch.float32, main_branch=None, act_factory=None, norm_factory=None, kernel_size=3, padding=1):
         super().__init__()
         self.act = _make_act(act_factory)
         self.skip = nn.Identity() if (in_channels==out_channels and stride==1) else nn.Sequential(

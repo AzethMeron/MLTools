@@ -224,6 +224,7 @@ class TrainingLoop:
             loss, outputs, targets = self.train_batch(data)
             # Since all are configured to use itemize_every_k = self.log_every_k, all of them will be logged in the same batch
             lb = loss_buffer.add(loss)
+            ob, tb = None, None
             if self.keep_outputs: 
                 ob = output_buffer.add(outputs)
                 tb = target_buffer.add(targets)
