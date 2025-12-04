@@ -270,7 +270,7 @@ class TrainingLoop:
         self.model = self.model.to(self.device)
         if resume and self.checkpoint_path and not self.loaded: 
             self.load_checkpoint(self.checkpoint_path)
-            print(f"Resuming training on epoch {self.epoch}. Best value: {self.best_val}")
+            print(f"Resuming training on epoch {self.epoch}. Best value: {self.best_val:.6f}")
         for epoch in range(self.epoch, self.num_epochs):
             self.epoch = epoch
             self.pre_epoch()

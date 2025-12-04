@@ -172,10 +172,13 @@ class CBAM(nn.Module):
 
  
 class ResidualBlock(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, stride:int=1, dtype=torch.float32, main_branch=None, act_factory=None):
+    def __init__(self, in_channels: int, out_channels: int, stride:int=1, dtype=torch.float32, main_branch=None, act_factory=None, norm_factory=None, kernel_size=3):
         super().__init__()
         self.act = _make_act(act_factory)
-        self.skip = nn.Identity() if (in_channels==out_channels and stride==1) else nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False, dtype=dtype)
+        self.skip = nn.Identity() if (in_channels==out_channels and stride==1) else nn.Sequential(
+                nn.AvgPool2d(kernel_size=kernel_size, stride=stride, padding=padding) if stride > 1 else nn.Identity(),
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, bias=False, dtype=dtype) if in_channels != out_channels else nn.Identity(), 
+                norm_factory(out_channels) if in_channels != out_channels else nn.Identity() )
         if main_branch is None: raise RuntimeError(f"ResidualBlock requires callable factory (in_channels, out_channels, stride, dtype) passed as main branch, got {str(type(main_branch))}")
         self.main = main_branch(in_channels, out_channels, stride, dtype)
     def forward(self, x):
