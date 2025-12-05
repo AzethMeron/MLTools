@@ -184,8 +184,8 @@ class TrainingLoop:
             loss = self.criterion(outputs, targets)
             return loss, outputs, targets
             
-    def compute_metrics(self, outputs, targets): # To be implemented on-demand. Must return one packed, pickle-able result. Both outputs and targets are None if self.keep_outputs=False
-        if self.keep_outputs:
+    def compute_metrics(self, outputs, targets, valid_mode): # To be implemented on-demand. Must return one packed, pickle-able result. Both outputs and targets are None if valid_mode=False
+        if valid_mode:
             # outputs, targets have data
             pass
         return None
@@ -283,9 +283,9 @@ class TrainingLoop:
             self.epoch = epoch
             self.pre_epoch()
             train_loss, train_outputs, train_targets = self._train_step(epoch)
-            train_metrics = self.compute_metrics(train_outputs, train_targets)
+            train_metrics = self.compute_metrics(train_outputs, train_targets, self.keep_outputs and self.metrics_train)
             test_loss, test_outputs, test_targets = self._test_step(epoch)
-            test_metrics = self.compute_metrics(test_outputs, test_targets)
+            test_metrics = self.compute_metrics(test_outputs, test_targets, self.keep_outputs and self.metrics_test)
             self.scheduler.step()
             
             self.history.append({'epoch':epoch, 'train_loss':train_loss, 'test_loss':test_loss, 'train_metrics':SaveDump(train_metrics), 'test_metrics':SaveDump(train_metrics)})
