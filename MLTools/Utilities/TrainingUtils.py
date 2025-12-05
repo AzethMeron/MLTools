@@ -4,7 +4,7 @@ from collections import deque
 from typing import List, Optional, Callable
 import os
 import math
-import .Serialization import SaveDump, LoadDump
+from .Serialization import SaveDump, LoadDump
 
 # ---------- Loss counters (small fixes) ----------
 
