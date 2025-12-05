@@ -4,6 +4,7 @@ from collections import deque
 from typing import List, Optional, Callable
 import os
 import math
+import .Serialization import SaveDump, LoadDump
 
 # ---------- Loss counters (small fixes) ----------
 
@@ -118,7 +119,7 @@ class DelayedStorage:
 # Scheduler is called once per epoch.
 # Also I recommand setting pin_memory=True, persistent_workers=True in dataloader. However if you don't set pin_memory, remember to set non_blocking = False. By default it's set to True
 class TrainingLoop:
-    def __init__(self, model: nn.Module, optimizer, criterion, device, epochs: int, train_loop_constructor: Callable, test_loop_constructor: Callable, log_every_k: int = 10, recent_memory: int = 10, scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None, checkpoint_path: Optional[str] = None, best_path: Optional[str] = None, non_blocking: bool = True, keep_outputs = True, min_rel_improval: float = 0.005):
+    def __init__(self, model: nn.Module, optimizer, criterion, device, epochs: int, train_loop_constructor: Callable, test_loop_constructor: Callable, log_every_k: int = 10, recent_memory: int = 10, scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None, checkpoint_path: Optional[str] = None, best_path: Optional[str] = None, non_blocking: bool = True, keep_outputs = True, metrics_train = False, metrics_test = True, min_rel_improval: float = 0.005):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler or torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1.0)
@@ -137,6 +138,8 @@ class TrainingLoop:
         self.non_blocking = non_blocking
         self.history = [] # history[epoch_id] = {'epoch', 'train_loss', 'test_loss', 'train_metrics', 'test_metrics'}
         self.keep_outputs = keep_outputs
+        self.metrics_train = metrics_train # Whether to keep train 
+        self.metrics_test = metrics_test
         self.min_rel_improval = min_rel_improval
         
     def load_checkpoint(self, path): # Sometimes it's worth to overload this function
@@ -201,6 +204,8 @@ class TrainingLoop:
         # If None or False is returned, training goes on.
         last_epoch = history[-1]
         epoch = last_epoch['epoch']
+        train_metrics = LoadDump(last_epoch['train_metrics'])
+        test_metrics = LoadDump(last_epoch['test_metrics'])
         
     def print_epoch_results(self, epoch, train_loss, train_metrics, test_loss, test_metrics):
         print(f"Epoch {epoch+1}: train_loss={train_loss:.4f}, test_loss={test_loss:.4f}")
@@ -215,6 +220,7 @@ class TrainingLoop:
         self.model.train()
         loop = self.train_loop_constructor()
         avg_loss, recent_loss = AverageLossCounter(), RecentLossCounter(memory = self.recent_memory)
+        whether_keep_outputs = self.keep_outputs and self.metrics_train
         loss_buffer = DelayedStorage(itemize_every_k = self.log_every_k)
         output_buffer = DelayedStorage(itemize_every_k = self.log_every_k)
         target_buffer = DelayedStorage(itemize_every_k = self.log_every_k)
@@ -225,24 +231,25 @@ class TrainingLoop:
             # Since all are configured to use itemize_every_k = self.log_every_k, all of them will be logged in the same batch
             lb = loss_buffer.add(loss)
             ob, tb = None, None
-            if self.keep_outputs: 
+            if whether_keep_outputs: 
                 ob = output_buffer.add(outputs)
                 tb = target_buffer.add(targets)
             if lb is not None:
                 for v in lb.tolist():
                     avg_loss.add(v)
                     recent_loss.add(v)
-                if self.keep_outputs:
+                if whether_keep_outputs:
                     all_outputs.append(ob)
                     all_targets.append(tb)
                 self.update_pbar(loop, "train", epoch, avg_loss.value(), recent_loss.value())
-        all_outputs = torch.cat(all_outputs) if self.keep_outputs else None
-        all_targets = torch.cat(all_targets) if self.keep_outputs else None
+        all_outputs = torch.cat(all_outputs) if whether_keep_outputs else None
+        all_targets = torch.cat(all_targets) if whether_keep_outputs else None
         return avg_loss.value(), all_outputs, all_targets     
     def _test_step(self, epoch): # Don't change
         self.model.eval()
         loop = self.test_loop_constructor()
         avg_loss, recent_loss = AverageLossCounter(), RecentLossCounter(memory = self.recent_memory)
+        whether_keep_outputs = self.keep_outputs and self.metrics_test
         loss_buffer = DelayedStorage(itemize_every_k = self.log_every_k)
         output_buffer = DelayedStorage(itemize_every_k = self.log_every_k)
         target_buffer = DelayedStorage(itemize_every_k = self.log_every_k)
@@ -252,19 +259,19 @@ class TrainingLoop:
             loss, outputs, targets = self.test_batch(data)
             # Since all are configured to use itemize_every_k = self.log_every_k, all of them will be logged in the same batch
             lb = loss_buffer.add(loss)
-            if self.keep_outputs:
+            if whether_keep_outputs:
                 ob = output_buffer.add(outputs)
                 tb = target_buffer.add(targets)
             if lb is not None:
                 for v in lb.tolist():
                     avg_loss.add(v)
                     recent_loss.add(v)
-                if self.keep_outputs:
+                if whether_keep_outputs:
                     all_outputs.append(ob)
                     all_targets.append(tb)
                 self.update_pbar(loop, "test", epoch, avg_loss.value(), recent_loss.value())
-        all_outputs = torch.cat(all_outputs) if self.keep_outputs else None
-        all_targets = torch.cat(all_targets) if self.keep_outputs else None
+        all_outputs = torch.cat(all_outputs) if whether_keep_outputs else None
+        all_targets = torch.cat(all_targets) if whether_keep_outputs else None
         return avg_loss.value(), all_outputs, all_targets   
     def run(self, resume=True): # Don't change
         final_pass = False
@@ -281,7 +288,7 @@ class TrainingLoop:
             test_metrics = self.compute_metrics(test_outputs, test_targets)
             self.scheduler.step()
             
-            self.history.append({'epoch':epoch, 'train_loss':train_loss, 'test_loss':test_loss, 'train_metrics':train_metrics, 'test_metrics':test_metrics})
+            self.history.append({'epoch':epoch, 'train_loss':train_loss, 'test_loss':test_loss, 'train_metrics':SaveDump(train_metrics), 'test_metrics':SaveDump(train_metrics)})
             val = self.quantify(test_loss, test_metrics)
             
             try:
