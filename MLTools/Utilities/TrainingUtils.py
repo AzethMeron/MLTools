@@ -105,6 +105,16 @@ class DelayedStorage:
     def __len__(self): 
         return len(self._storage)
 
+def CosineAnnealingWithWarmup(optimizer, warmup_epochs, total_epochs, warmup_factor = 0.01):
+    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=warmup_factor, end_factor=1.0, total_iters=warmup_epochs)
+    annealing_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=(total_epochs - warmup_epochs))
+    lr_scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, annealing_scheduler],
+            milestones=[warmup_epochs]
+    )
+    return lr_scheduler
+
 # Versatile training loop class, which can be easily expanded to accomodate pretty much any usecase.
 # Functions to be overloaded:
 # train_batch, test_batch, compute_metrics, print_epoch_results, update_pbar, quantify
