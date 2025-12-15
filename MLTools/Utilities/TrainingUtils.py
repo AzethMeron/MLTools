@@ -283,6 +283,10 @@ class TrainingLoop:
         all_outputs = torch.cat(all_outputs) if whether_keep_outputs else None
         all_targets = torch.cat(all_targets) if whether_keep_outputs else None
         return avg_loss.value(), all_outputs, all_targets   
+    @staticmethod
+    def _improvement_check(x, prev_x, minimal_change, eps = 1e-8):
+        offset = max(abs(prev_x) * minimal_change, eps)
+        return x <= (prev_x - offset)
     def run(self, resume=True): # Don't change
         final_pass = False
         self.model = self.model.to(self.device)
@@ -305,8 +309,7 @@ class TrainingLoop:
                 if self.post_epoch(self.history): final_pass = True
             except Exception as e:
                 print(f"{type(e)} occured during post_epoch execution: {str(e)}")
-            
-            if (self.best_val * (1.0-self.min_rel_improval)) >= val:
+            if self._improvement_check(val, self.best_val, self.min_rel_improval):
                 self.improved_val(self.best_val, val)
                 self.best_val = val
                 if self.best_path: self.save_checkpoint(self.best_path)
