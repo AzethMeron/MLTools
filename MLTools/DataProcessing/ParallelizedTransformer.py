@@ -16,6 +16,9 @@ class TransformProcess(mp.Process):
             x = self.transform(pil_image)
             self.out_queue.put( (idx, x) )
 
+# Allows parallelized transformation of pillow images (or any data, actually)
+# Should be used ONLY by "platform" (wrapper for model)
+# Using during training will actually lower performance. Use DataLoaders.
 class ParallelizedTransformer:
     def __init__(self, transform, num_workers):
         ctx = mp.get_context("spawn")
