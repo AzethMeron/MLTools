@@ -7,3 +7,4 @@ from .TrainingUtils import RecentLossCounter, AverageLossCounter, TensorBatchSto
 from .Webhooks import DiscordWebhook
 from .Visualizer import Visualizer
 from .VideoProc import FrameReader, FrameWriter
+from .Tee import Tee
