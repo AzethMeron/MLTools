@@ -304,6 +304,7 @@ class TrainingLoop:
             
             self.history.append({'epoch':epoch, 'train_loss':train_loss, 'test_loss':test_loss, 'train_metrics':SaveDump(train_metrics), 'test_metrics':SaveDump(train_metrics)})
             val = self.quantify(test_loss, test_metrics)
+            if self.best_val is math.inf: self.best_val = val
             
             try:
                 if self.post_epoch(self.history): final_pass = True
