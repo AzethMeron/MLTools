@@ -1,0 +1,88 @@
+Note: written during the 2026-06 audit, in the style of the existing docs.
+
+# ============================================================
+# Class: Detection  (MLTools.Detections)
+# ============================================================
+# A single (optionally rotated) detection box in CXCYWH format, plus the
+# toolbox around it: format conversions, geometric transforms, NMS, IOU,
+# drawing, and a bridge to the `supervision` library.
+#
+# Coordinate conventions:
+#   - Screen coordinates: x grows right, y grows DOWN.
+#   - (cx, cy) is the box center; (w, h) the full width/height.
+#   - rotation is in DEGREES, applied about the box center. Positive angles
+#     rotate clockwise on screen (because y points down).
+#   - All transforms return NEW Detection objects; nothing mutates in place.
+#
+# Constructor:
+#   Detection(cx, cy, w, h, rotation, class_id, confidence)
+#
+# Static constructors:
+#   from_xyxy(x1, y1, x2, y2, class_id, confidence)
+#       Axis-aligned corners -> CXCYWH with rotation=0.
+#   from_topleft_xywh(x, y, w, h, class_id, confidence)
+#       Top-left corner + size -> CXCYWH with rotation=0 (COCO bbox layout).
+#   from_xywh(...)
+#       Alias of from_topleft_xywh.
+#   from_cxcywh(cx, cy, w, h, class_id, confidence)
+#       Direct CXCYWH with rotation=0.
+#
+# Accessors:
+#   Center() -> (cx, cy);  Width();  Height();  Rotation();  ClassId();
+#   Confidence();  Explode() -> ((cx, cy, w, h, rotation), class_id, confidence)
+#
+# Geometry:
+#   Rescale(orig_size, new_size) -> Detection
+#       Scales center and size by (new/orig) per axis. NOTE: with a non-zero
+#       rotation and non-uniform scaling, a rotated rectangle is not exactly
+#       preserved - intended for axis-aligned boxes or uniform scales.
+#   Rotate(angle, rotation_center) -> Detection
+#       Rotates the CENTER around rotation_center by `angle` degrees (screen
+#       coords) and adds `angle` to the stored rotation (mod 360).
+#   RotatedCorners() -> [(x, y) x4]
+#       The four corners after applying the stored rotation about the center.
+#       Order: top-left, top-right, bottom-right, bottom-left (pre-rotation).
+#   to_xyxy(anchor="max", eps_deg=5) -> [x1, y1, x2, y2]
+#       Axis-aligned envelope of the rotated corners. The `anchor`/`eps_deg`
+#       parameters are reserved for future anchor modes and currently unused.
+#   HorizontalFlip(image_width) -> Detection
+#       Mirror across the vertical axis: cx' = W - cx, rotation' = -rotation.
+#   VerticalFlip(image_height) -> Detection
+#       Mirror across the horizontal axis: cy' = H - cy, rotation' = 180 - rotation.
+#       (For rectangles, both flip conventions agree because box(theta) ==
+#       box(theta + 180).)
+#   TranslateW(dx) / TranslateH(dy) -> Detection
+#       Shift the center along one axis.
+#
+# Visualization:
+#   Draw(pil_image, class_id_to_name=None, width=2) -> PIL.Image
+#       Draws the (rotated) polygon outline and the class label in red onto
+#       the image (in place) and returns it.
+#
+# NMS / IOU:
+#   NaiveNMS(detections, iou_threshold=0.5, anchor="max") -> list  [static]
+#       Class-agnostic NMS over the axis-aligned envelopes
+#       (torchvision.ops.nms). Returns surviving detections.
+#   NMS(detections, iou_threshold=0.5, anchor="max") -> list  [static]
+#       Class-aware NMS: groups by class_id and runs NaiveNMS per class.
+#   IOU(other, anchor="max") -> float
+#       IOU of the two axis-aligned envelopes (rotation is flattened into the
+#       envelope first - this is NOT a rotated-box IOU).
+#
+# supervision bridge (requires `pip install supervision`):
+#   to_supervision(detections, anchor="max")  [static]
+#       List[Detection] -> sv.Detections (xyxy, confidence, class_id).
+#       A nested list (batch) maps to a list of sv.Detections.
+#       An empty list maps to sv.Detections.empty().
+#   from_supervision(sv_detections)  [static]
+#       sv.Detections -> List[Detection]. Missing (None) confidence defaults
+#       to 1.0; missing class_id defaults to -1. A list input is mapped
+#       element-wise.
+#   ToSupervision(detections)  [static, deprecated]
+#       Old-style alias of to_supervision; emits DeprecationWarning.
+#
+# Usage:
+#   det  = Detection.from_xyxy(10, 20, 50, 80, class_id=0, confidence=0.9)
+#   det2 = det.HorizontalFlip(image_width=640).Rotate(15, (320, 240))
+#   kept = Detection.NMS([det, det2], iou_threshold=0.5)
+#   sv_d = Detection.to_supervision(kept)

@@ -189,7 +189,7 @@ class Visualizer:
         axes = np.empty((_nrows, _ncols), dtype=object)
         for r in range(_nrows):
             for c in range(_ncols):
-                ax: Axes = fig.add_subplot(_nrows, _ncols, r*_ncols + c + 1, sharex=axes[0,0] if (share_axes and r*c>0) else None, sharey=axes[0,0] if (share_axes and r*c>0) else None)  # type: ignore[index]
+                ax: Axes = fig.add_subplot(_nrows, _ncols, r*_ncols + c + 1, sharex=axes[0,0] if (share_axes and (r + c) > 0) else None, sharey=axes[0,0] if (share_axes and (r + c) > 0) else None)  # type: ignore[index]
                 axes[r, c] = ax
                 # Place image if exists, else hide axis
                 if c < len(rows_list[r]):
@@ -245,9 +245,8 @@ class Visualizer:
             return Image.open(buf).convert("RGBA")
 
         canvas.draw()
-        w, h = fig.canvas.get_width_height()
-        buf = np.frombuffer(canvas.tostring_argb(), dtype=np.uint8).reshape((h, w, 4))
-        buf = buf[:, :, [1, 2, 3, 0]]  # ARGB -> RGBA
+        # buffer_rgba() replaces tostring_argb(), which was removed in matplotlib 3.10
+        buf = np.asarray(canvas.buffer_rgba()).copy()
         return Image.fromarray(buf, mode="RGBA")
 
     # ---------- Internals ----------

@@ -23,7 +23,11 @@ class IncrementalPCA:
       - n_samples_seen_ : int
 
     Implementation note:
-      We maintain exact first/second moments (S1 = sum x, S2 = sum x^T x).
+      We maintain *centered* streaming moments (running mean + scatter matrix
+      M2 = sum (x-mean)(x-mean)^T) merged batch-by-batch with Chan's parallel
+      update. Unlike raw moments (sum x, sum x^T x), this is robust to large
+      offsets (|mean| >> std) where E[xx^T] - mean mean^T cancels
+      catastrophically even in float64.
       After each partial_fit, we recompute eigenpairs of the current covariance.
       This is O(F^3) per update (F = n_features), but extremely robust and simple.
       For very large F (e.g., > 2k), consider reducing dimensionality first.
@@ -67,8 +71,8 @@ class IncrementalPCA:
         self.n_samples_seen_ = 0
 
         # Accumulators (set after first batch)
-        self._S1 = None   # (F,) sum(x)
-        self._S2 = None   # (F,F) sum(x^T x)
+        self._run_mean = None   # (F,) running mean
+        self._M2 = None         # (F,F) centered scatter: sum (x-mean)(x-mean)^T
 
         # Model attributes (populated after eigenupdate)
         self.n_components_ = None
@@ -90,9 +94,9 @@ class IncrementalPCA:
     def _ensure_accumulators(self, n_features: int):
         dev = self._device
         acc = self._acc_dtype
-        if self._S1 is None:
-            self._S1 = torch.zeros(n_features, device=dev, dtype=acc)
-            self._S2 = torch.zeros(n_features, n_features, device=dev, dtype=acc)
+        if self._run_mean is None:
+            self._run_mean = torch.zeros(n_features, device=dev, dtype=acc)
+            self._M2 = torch.zeros(n_features, n_features, device=dev, dtype=acc)
 
     @staticmethod
     def _check_2d(X: torch.Tensor) -> torch.Tensor:
@@ -107,9 +111,8 @@ class IncrementalPCA:
         N = self.n_samples_seen_
         if N <= 0:
             raise RuntimeError("No samples seen; call partial_fit first.")
-        mean = self._S1 / N                                  # (F,)
-        E_xx = self._S2 / N                                  # (F,F)
-        Cov = E_xx - torch.outer(mean, mean)                 # (F,F)
+        mean = self._run_mean.clone()                        # (F,)
+        Cov = self._M2 / N                                   # (F,F)
         total_var = torch.trace(Cov)                         # scalar
         return mean, Cov, total_var
 
@@ -189,10 +192,22 @@ class IncrementalPCA:
         # Move to model device and accumulate in acc dtype
         Xd = X.to(self._device, dtype=self._acc_dtype, non_blocking=True)
 
-        # Update moments
-        self._S1 += Xd.sum(dim=0)               # (F,)
-        self._S2 += Xd.T @ Xd                   # (F,F)
-        self.n_samples_seen_ += X.shape[0]
+        # Update centered moments via Chan's parallel merge
+        nB = Xd.shape[0]
+        if nB > 0:
+            n_old = self.n_samples_seen_
+            n_new = n_old + nB
+            batch_mean = Xd.mean(dim=0)                       # (F,)
+            Xc = Xd - batch_mean
+            batch_M2 = Xc.T @ Xc                              # (F,F)
+            if n_old == 0:
+                self._run_mean = batch_mean
+                self._M2 = batch_M2
+            else:
+                delta = batch_mean - self._run_mean           # (F,)
+                self._run_mean = self._run_mean + delta * (nB / n_new)
+                self._M2 = self._M2 + batch_M2 + torch.outer(delta, delta) * (n_old * nB / n_new)
+            self.n_samples_seen_ = n_new
 
         # Update eigen model
         self._eigendecompose_update()
@@ -202,12 +217,17 @@ class IncrementalPCA:
     def fit(self, X: torch.Tensor):
         """
         Fit from a 2D tensor. If batch_size is set, stream rows in chunks.
+        Like sklearn, fit() forgets any previously seen data (use partial_fit
+        to accumulate across calls).
         """
         X = self._check_2d(X)
+        self.reset()
         if self.batch_size is None:
             return self.partial_fit(X)
         else:
             bs = int(self.batch_size)
+            if bs <= 0:
+                raise ValueError(f"batch_size must be a positive integer or None, got {self.batch_size}")
             for i in range(0, X.shape[0], bs):
                 self.partial_fit(X[i:i+bs])
             return self
@@ -258,15 +278,17 @@ class IncrementalPCA:
     @torch.no_grad()
     def get_covariance(self) -> torch.Tensor:
         """
-        Reconstruct the feature covariance:
-            C ≈ components_.T diag(explained_variance_) components_ + noise_variance_ * I
+        Reconstruct the feature covariance (sklearn-compatible):
+            C ≈ components_.T diag(explained_variance_ - noise) components_ + noise * I
+        where noise = noise_variance_ (mean of discarded eigenvalues).
         """
         if self.components_ is None:
             raise RuntimeError("Model is not fitted yet.")
         K, F = self.components_.shape
-        C = (self.components_.T * self.explained_variance_) @ self.components_
-        if self.noise_variance_ is not None and self.noise_variance_.numel() == 1:
-            C = C + self.noise_variance_ * torch.eye(F, device=C.device, dtype=C.dtype)
+        noise = self.noise_variance_ if (self.noise_variance_ is not None and self.noise_variance_.numel() == 1) else torch.zeros((), device=self.components_.device, dtype=self.components_.dtype)
+        exp_var_diff = torch.clamp(self.explained_variance_ - noise, min=0.0)
+        C = (self.components_.T * exp_var_diff) @ self.components_
+        C = C + noise * torch.eye(F, device=C.device, dtype=C.dtype)
         return C
 
     @torch.no_grad()
@@ -282,8 +304,8 @@ class IncrementalPCA:
         """Reset the estimator to its initial, unfitted state."""
         self.n_features_ = None
         self.n_samples_seen_ = 0
-        self._S1 = None
-        self._S2 = None
+        self._run_mean = None
+        self._M2 = None
         self.n_components_ = None
         self.components_ = None
         self.explained_variance_ = None

@@ -1,0 +1,158 @@
+Note: written during the 2026-06 audit, in the style of the existing docs.
+TrainingLoop and its helpers have their own file (TrainingLoop.txt).
+
+Import note: MLTools.Utilities lazily resolves Visualizer (needs matplotlib)
+and DiscordWebhook (needs requests) via module __getattr__, so importing the
+package does NOT require those optional dependencies.
+
+# ============================================================
+# Serialization  (SaveBin / LoadBin / SaveDump / LoadDump / LoadOrCompute)
+# ============================================================
+# SaveBin(path, obj)   - pickle + zlib-compress + write to file.
+# LoadBin(path)        - read + decompress + unpickle.
+# SaveDump(obj)        - pickle + compress, returns bytes (no file).
+# LoadDump(data)       - inverse of SaveDump.
+# LoadOrCompute(path, func)
+#   Returns LoadBin(path) when the file exists; otherwise computes func(),
+#   saves it to path and returns it. Classic cache-on-disk helper.
+# SECURITY: these are pickles - never load data from untrusted sources.
+
+# ============================================================
+# Class: ClassMapper
+# ============================================================
+# Bidirectional mapping between external label ids, dense class ids
+# (0..N-1 in registration order) and human-readable names.
+#
+#   Register(label_id, label_name) - idempotent per label_id (re-registering
+#       the same label_id is a no-op, even with a different name).
+#   LabelToClass(label_id) / ClassToLabel(class_id)
+#   ClassToName(class_id)  / NameToClass(name)
+#       All raise KeyError for unknown keys.
+#   Copy() -> deep copy;  __len__ -> number of classes.
+# Caveat: names are assumed unique; registering two labels with the same
+# name makes NameToClass return the latest one.
+
+# ============================================================
+# Class: Metrics
+# ============================================================
+# Append-only metric log; each entry is a dict stored as a compressed pickle.
+#
+#   Metrics(path)        - path may be None (no persistence).
+#   update(dict)         - appends, saves to path (if set), prints summary
+#                          (floats with 4 significant digits).
+#   save() / load()      - whole-list pickle to/from path.
+#   m[i], len(m), iter(m) - entries decompress transparently.
+
+# ============================================================
+# Cosmetics  (SciNotation / CountParameters)
+# ============================================================
+# SciNotation(x, precision=2, simplify=True) -> str
+#   "1.23 × 10⁴" style formatting with unicode superscripts. With
+#   simplify=True, exponent 0 renders as the bare base and base 1.00 renders
+#   as a bare power of ten.
+# CountParameters(model, return_sci_notation=False, trainable_only=True)
+#   Sum of parameter counts; trainable_only filters by requires_grad.
+
+# ============================================================
+# Convertion  (PilToOpenCV / OpenCVToPil)
+# ============================================================
+# PilToOpenCV(pil)  -> BGR uint8 HWC np.ndarray (converts to RGB first).
+# OpenCVToPil(arr)  -> RGB PIL.Image from a BGR ndarray.
+
+# ============================================================
+# Class: Tee  (+ TeeStdout / TeeStderr context managers)
+# ============================================================
+# File-like object mirroring writes to multiple streams while impersonating
+# the primary (first) stream: encoding (falls back to "utf-8" when the
+# primary reports none), isatty(), fileno(), and arbitrary attribute
+# passthrough via __getattr__. write() flushes all streams every call and
+# returns the primary stream's character count.
+#
+# TeeStdout(log_path, mode="w", encoding="utf-8")
+# TeeStderr(log_path, mode="w", encoding="utf-8")
+#   Context managers that tee sys.stdout / sys.stderr into a log file and
+#   restore the original stream (and close the file) on exit, exceptions
+#   included.
+#
+# Usage:
+#   with TeeStdout("train.log"):
+#       run_training()   # console output also lands in train.log
+
+# ============================================================
+# Classes: FrameReader / FrameWriter  (VideoProc)
+# ============================================================
+# FrameReader(source, batch_size=64, use_pil=True, default_fps=30.0)
+#   Batched video reader over cv2.VideoCapture. Iterating yields lists of
+#   frames (PIL RGB by default, BGR ndarrays with use_pil=False); the last
+#   batch may be shorter; iteration auto-closes at EOF.
+#   Attributes: fps (falls back to default_fps when the container reports
+#   none), width, height, frame_count (None when unknown).
+#   Methods: read() -> next batch or [], reset() -> seek to frame 0 (files
+#   only; returns False after close), close() (idempotent). Supports `with`.
+#   IOError when the source cannot be opened; ValueError for batch_size < 1.
+#
+# FrameWriter(filename, fps=30, width=640, height=480, use_pil=True)
+#   cv2.VideoWriter wrapper hard-wired to the 'avc1' (H.264) fourcc -
+#   requires an OpenH264 build; raises IOError otherwise (the repository
+#   ships codecs/ binaries you can drop next to your script).
+#   write(frames) accepts one frame or a list; PIL inputs are converted, and
+#   every frame is resized to (width, height). Supports `with`; close() is
+#   idempotent.
+
+# ============================================================
+# Class: Visualizer
+# ============================================================
+# Dataclass-style Matplotlib helper (Agg backend forced at import).
+# Construction: Visualizer(figsize=(6,4), dpi=120, style=None, rcparams={}).
+# All chart methods return (Figure, Axes) and decorate with major+minor grids
+# by default.
+#
+#   line(y, x=None, *, label, title, xlabel, ylabel, marker, linewidth,
+#        grid, legend, minor_grid)
+#   multi_line(series: {name: y}, x=None, *, markers=None, ...)
+#       x defaults to range(len(y)); length mismatch raises ValueError.
+#   scatter(y, x=None, *, s=20, ...)
+#   bar(values, labels=None, *, rotate_xticks=False, ...)
+#   images_grid(images, *, nrows, ncols, titles=None, share_axes=True,
+#               suptitle=None, tight=True, grid, minor_grid, keep_aspect)
+#       Accepts a flat list (nrows/ncols REQUIRED, count must equal
+#       nrows*ncols) or a nested list of rows (ragged rows allowed; missing
+#       cells get hidden axes). Returns (Figure, np.ndarray of Axes).
+#   loss_chart(history) -> multi_line of train/test loss from a
+#       TrainingLoop-style history list.
+#   draw_to_pil(fig, *, dpi=None, tight=True, bg_color=None) -> PIL RGBA
+#       tight=True renders through savefig(bbox_inches="tight");
+#       tight=False rasterizes the canvas buffer directly.
+#
+# Usage:
+#   viz = Visualizer(figsize=(8, 5))
+#   fig, ax = viz.loss_chart(loop.history)
+#   Visualizer.draw_to_pil(fig).save("loss.png")
+
+# ============================================================
+# Class: DiscordWebhook
+# ============================================================
+# Minimal Discord webhook client (text + files + embeds) over a persistent
+# requests.Session.
+#
+# Args:
+#   url (str): webhook URL.
+#   username (str | None): display-name override.
+#   noexcept (bool = True): when True, send_message() swallows all errors and
+#       prints them (training must not die because Discord hiccuped); when
+#       False, errors propagate (RuntimeError for non-200/204 responses).
+#
+# send_message(text=None, files=None, embeds=None)
+#   files: list of raw bytes; uploaded as multipart attachments named
+#   upload_<i>.png. When files are present the JSON body (content/username/
+#   embeds) is sent as the 'payload_json' multipart field, per Discord's API
+#   (plain form fields cannot encode embeds).
+#
+# kvtable_to_embed(title, kv, color=0x5865F2, inline=True)  [static]
+#   Dict -> embed with one field per key; floats formatted to 6 decimals,
+#   values wrapped in backticks.
+#
+# Usage:
+#   hook = DiscordWebhook(url, username="trainer")
+#   hook.send_message(text="epoch done",
+#                     embeds=[DiscordWebhook.kvtable_to_embed("Stats", {"loss": 0.12})])

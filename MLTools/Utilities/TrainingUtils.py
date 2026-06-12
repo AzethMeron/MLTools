@@ -99,6 +99,14 @@ class DelayedStorage:
             return self._last_value
         return None
 
+    def flush(self) -> Optional[torch.Tensor]:
+        """Emit whatever is buffered (fewer than K items), or None if empty."""
+        if len(self._storage) == 0:
+            return None
+        self._last_value = self._storage.value()
+        self._storage.clear()
+        return self._last_value
+
     def last_value(self) -> Optional[torch.Tensor]:
         return self._last_value
 
@@ -106,6 +114,10 @@ class DelayedStorage:
         return len(self._storage)
 
 def CosineAnnealingWithWarmup(optimizer, warmup_epochs, total_epochs, warmup_factor = 0.01):
+    if warmup_epochs < 1:
+        raise ValueError(f"warmup_epochs must be >= 1, got {warmup_epochs}")
+    if total_epochs <= warmup_epochs:
+        raise ValueError(f"total_epochs ({total_epochs}) must be greater than warmup_epochs ({warmup_epochs})")
     warmup_scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=warmup_factor, end_factor=1.0, total_iters=warmup_epochs)
     annealing_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=(total_epochs - warmup_epochs))
     lr_scheduler = torch.optim.lr_scheduler.SequentialLR(
@@ -252,9 +264,20 @@ class TrainingLoop:
                     all_outputs.append(ob)
                     all_targets.append(tb)
                 self.update_pbar(loop, "train", epoch, avg_loss.value(), recent_loss.value())
-        all_outputs = torch.cat(all_outputs) if whether_keep_outputs else None
-        all_targets = torch.cat(all_targets) if whether_keep_outputs else None
-        return avg_loss.value(), all_outputs, all_targets     
+        # Flush partial buffers so short epochs / trailing batches aren't dropped
+        lb = loss_buffer.flush()
+        if lb is not None:
+            for v in lb.tolist():
+                avg_loss.add(v)
+                recent_loss.add(v)
+        if whether_keep_outputs:
+            ob = output_buffer.flush()
+            tb = target_buffer.flush()
+            if ob is not None: all_outputs.append(ob)
+            if tb is not None: all_targets.append(tb)
+        all_outputs = torch.cat(all_outputs) if (whether_keep_outputs and all_outputs) else None
+        all_targets = torch.cat(all_targets) if (whether_keep_outputs and all_targets) else None
+        return avg_loss.value(), all_outputs, all_targets
     def _test_step(self, epoch): # Don't change
         self.model.eval()
         loop = self.test_loop_constructor()
@@ -280,9 +303,20 @@ class TrainingLoop:
                     all_outputs.append(ob)
                     all_targets.append(tb)
                 self.update_pbar(loop, "test", epoch, avg_loss.value(), recent_loss.value())
-        all_outputs = torch.cat(all_outputs) if whether_keep_outputs else None
-        all_targets = torch.cat(all_targets) if whether_keep_outputs else None
-        return avg_loss.value(), all_outputs, all_targets   
+        # Flush partial buffers so short epochs / trailing batches aren't dropped
+        lb = loss_buffer.flush()
+        if lb is not None:
+            for v in lb.tolist():
+                avg_loss.add(v)
+                recent_loss.add(v)
+        if whether_keep_outputs:
+            ob = output_buffer.flush()
+            tb = target_buffer.flush()
+            if ob is not None: all_outputs.append(ob)
+            if tb is not None: all_targets.append(tb)
+        all_outputs = torch.cat(all_outputs) if (whether_keep_outputs and all_outputs) else None
+        all_targets = torch.cat(all_targets) if (whether_keep_outputs and all_targets) else None
+        return avg_loss.value(), all_outputs, all_targets
     @staticmethod
     def _improvement_check(x, prev_x, minimal_change, eps = 1e-8):
         offset = max(abs(prev_x) * minimal_change, eps)
@@ -302,10 +336,13 @@ class TrainingLoop:
             test_metrics = self.compute_metrics(test_outputs, test_targets, self.keep_outputs and self.metrics_test)
             self.scheduler.step()
             
-            self.history.append({'epoch':epoch, 'train_loss':train_loss, 'test_loss':test_loss, 'train_metrics':SaveDump(train_metrics), 'test_metrics':SaveDump(train_metrics)})
+            self.history.append({'epoch':epoch, 'train_loss':train_loss, 'test_loss':test_loss, 'train_metrics':SaveDump(train_metrics), 'test_metrics':SaveDump(test_metrics)})
             val = self.quantify(test_loss, test_metrics)
-            if self.best_val is math.inf: self.best_val = val
-            
+            if math.isinf(self.best_val):
+                # First measurable epoch sets the baseline and is the best so far
+                self.best_val = val
+                if self.best_path: self.save_checkpoint(self.best_path)
+
             try:
                 if self.post_epoch(self.history): final_pass = True
             except Exception as e:

@@ -140,7 +140,7 @@ class Detection:
     def ToSupervision(detections):
       import warnings
       warnings.warn("Using old syntax", DeprecationWarning)
-      return Detections.to_supervision(detections)
+      return Detection.to_supervision(detections)
     
     @staticmethod
     def to_supervision(detections, anchor="max"):
@@ -157,11 +157,15 @@ class Detection:
     def from_supervision(sv_detections):
       if isinstance(sv_detections, list): return [ Detection.from_supervision(det) for det in sv_detections ]
       import supervision as sv
+      n = len(sv_detections.xyxy)
+      # supervision allows confidence/class_id to be None; fall back to sane defaults
+      confidence = sv_detections.confidence if sv_detections.confidence is not None else np.ones(n, dtype=np.float32)
+      class_id = sv_detections.class_id if sv_detections.class_id is not None else np.full(n, -1, dtype=np.int64)
       output = []
-      for bbox, conf, class_id in zip(sv_detections.xyxy, sv_detections.confidence, sv_detections.class_id):
+      for bbox, conf, cid in zip(sv_detections.xyxy, confidence, class_id):
           # bbox is a numpy array: [x1, y1, x2, y2]
           x1, y1, x2, y2 = bbox
-          output.append( Detection.from_xyxy(x1, y1, x2, y2, class_id, conf) )
+          output.append( Detection.from_xyxy(x1, y1, x2, y2, cid, conf) )
       return output
 
     @staticmethod

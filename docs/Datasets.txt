@@ -1,0 +1,178 @@
+Note: written during the 2026-06 audit, in the style of the existing docs.
+
+All classes below subclass torch.utils.data.Dataset and are exposed under
+MLTools.Dataset. None of them download anything implicitly; the static
+download() helpers must be called explicitly.
+
+# ============================================================
+# Class: MNIST
+# ============================================================
+# Minimal MNIST loader over the raw IDX files; everything preloaded to RAM.
+#
+# Args:
+#   root (str | PathLike): Directory containing the IDX files (or a nested
+#       "MNIST" folder, which is detected automatically). Files may be raw
+#       (`train-images-idx3-ubyte`) or gzipped (`...-ubyte.gz`); .gz files
+#       are decompressed in place on first use.
+#   train (bool = True): train split (60k) vs t10k split.
+#   transform (Callable | None): applied to the PIL image.
+#
+# __getitem__ -> (PIL.Image 'L' 28x28, one-hot np.float32 (10,))
+#
+# Integrity checks: IDX magic numbers (0x803 images / 0x801 labels), 28x28
+# dimensions, image/label count agreement - RuntimeError on mismatch.
+#
+# download(dest_dir, url=...) -> Path  [static]
+#   Fetches and decompresses the four IDX files into dest_dir/MNIST.
+#   Default source: storage.googleapis.com/cvdf-datasets/mnist.
+
+# ============================================================
+# Class: CIFAR10
+# ============================================================
+# Loader for the official 'cifar-10-python' pickle batches, preloaded as one
+# uint8 array (N, 32, 32, 3) in HWC layout.
+#
+# Args:
+#   root: Directory containing 'cifar-10-batches-py' (or that folder itself,
+#       or root/CIFAR10/cifar-10-batches-py from download()).
+#   train (bool = True): 5 train batches (50k) vs test_batch (10k).
+#   transform (Callable | None): applied to the PIL image.
+#
+# __getitem__ -> (PIL.Image 'RGB' 32x32, one-hot np.float32 (10,))
+#
+# download(dest_dir, url=...) -> Path  [static]
+#   Downloads and extracts the tarball into dest_dir/CIFAR10. Extraction
+#   uses tarfile filter="data" when available (Python >= 3.11.4) to refuse
+#   path-traversal entries.
+
+# ============================================================
+# Class: TinyImageNet
+# ============================================================
+# Tiny ImageNet (200 classes, 64x64). Annotations (paths + labels) are
+# preloaded; images are opened lazily per __getitem__.
+#
+# Args:
+#   root: Directory containing train/ and val/ (or a nested
+#       tiny-imagenet-200/). wnids.txt defines the stable class ordering and
+#       must list exactly 200 entries (RuntimeError otherwise).
+#   train (bool = True): train/<wnid>/images/*.JPEG vs val/images/*.JPEG
+#       mapped through val_annotations.txt.
+#   transform (Callable | None)
+#
+# __getitem__ -> (PIL.Image 'RGB', one-hot np.float32 (200,))
+#
+# download(dest_dir, url=...) -> Path  [static]
+
+# ============================================================
+# Class: TinyImageNetFeatures
+# ============================================================
+# Precomputed ResNet50 features of TinyImageNet, stored as a SaveBin blob
+# (see Utilities.Serialization). __getitem__ -> (features, onehot).
+# Class attributes URL_ResNet50_train / URL_ResNet50_val point at the
+# released .bin files; download(path) fetches both into path/.
+# NOTE: the file is an arbitrary pickle - only load blobs you trust.
+
+# ============================================================
+# Class: PreloadedDataset
+# ============================================================
+# Eagerly converts any (image, label) Dataset into an in-memory dataset with
+# a configurable storage format.
+#
+# Args:
+#   base_dataset: source Dataset; iterated once in __init__, not retained.
+#   compression (None | 'zlib' | 'PNG' | 'JPG'/'JPEG', case-insensitive):
+#       None  - store PIL copies (fastest, most RAM)
+#       zlib  - pickled + zlib-compressed PIL images (lossless)
+#       PNG   - PNG bytes (lossless; png_compression = 0..9, default 6)
+#       JPEG  - JPEG bytes (lossy; jpg_quality clamped to [1, 95]; images are
+#               converted to RGB for encoding)
+#       ValueError for anything else.
+#   transform (Callable | None): applied to the decoded PIL image per access.
+#
+# Input coercion (_ensure_pil): accepts PIL images, torch tensors (CHW or
+# HWC; floats assumed in [0,1] and scaled to uint8; (1,H,W) grayscale
+# squeezed properly), numpy arrays (HW/HWC; float kinds clipped to [0,1]),
+# or anything np.array() can digest.
+#
+# __getitem__ -> (PIL.Image, label-as-stored)
+
+# ============================================================
+# Classes: COCO, SimpleDataset, DetectionDataset
+# ============================================================
+# COCO(image_dir, annotation_path, class_mapper)
+#   Parses a COCO-format JSON; categories are registered into the provided
+#   ClassMapper (sorted by category id). Only images that HAVE annotations
+#   become items. __getitem__ -> (PIL RGB image, [Detection]) with
+#   confidence 1.0.
+#   COCO.download(path, ...) fetches the official 2017 zips (large!).
+#
+# SimpleDataset(data, root_path)
+#   data = [(image_name, [Detection]), ...]; images loaded lazily from
+#   root_path/image_name. Produced by DetectionDataset.LoadAugmentedDataset.
+#
+# DetectionDataset(dataset, class_mapper, image_size=(640, 480),
+#                  augmentation=None, horizontal_flip=None, vertical_flip=None,
+#                  rotate=None, translate_w=None, translate_h=None,
+#                  generate_once=False, device="cpu", fill=(114,114,114))
+#   Wraps an (image, [Detection]) dataset with letterboxing plus geometric
+#   augmentations that are applied CONSISTENTLY to image and boxes.
+#
+#   Augmentation parameter conventions:
+#     horizontal_flip / vertical_flip: None or probability in [0, 1].
+#     rotate / translate_w / translate_h accept:
+#         None            - disabled
+#         scalar x        - uniform(-|x|, |x|)   (int or float; 0 disables)
+#         (lo, hi) tuple  - uniform(lo, hi)      (lists work too)
+#       Anything else raises TypeError/ValueError at access time.
+#     rotate is in degrees; translations are FRACTIONS of the target canvas
+#     (dx = fraction * W, dy = fraction * H).
+#     augmentation: PIL -> PIL callable; must not change geometry (it runs
+#     before letterboxing but boxes are not passed through it).
+#
+#   Pipeline per item: load -> augmentation -> letterbox to image_size ->
+#   flips -> rotation about the canvas center -> translation; detections get
+#   the equivalent transform chain.
+#
+#   generate_once=True renders every item ONCE at construction and serves the
+#   cached (image, detections) afterwards - meant for validation sets.
+#
+#   GetClassStats() -> {class_id: count} over the RAW (pre-augmentation)
+#   dataset; cached after the first call.
+#
+#   SaveAugmentedDataset(root_path, extension=".png")
+#       Materializes one augmented pass to disk (images + data.pkl).
+#   LoadAugmentedDataset(root_path) -> SimpleDataset  [static]
+
+# ============================================================
+# FlyingStuff  (MLTools.Dataset.FlyingStuff)
+# ============================================================
+# Modular Flying-Chairs-style optical-flow data generator plus its loader.
+#
+# Key pieces:
+#   ForegroundDataset / BackgroundDataset (ABCs)
+#       Implement get_random() -> ForegroundSample(image, mask) / PIL image.
+#       Register implementations with @register_fg("name") / @register_bg.
+#       Built-ins: 'pets', 'voc_person', 'coco_person' (needs pycocotools and
+#       a local COCO copy), 'clouds' (synthetic); background: 'dtd'.
+#   Layer(tex, alpha, A1, A2, z, pad_mode)
+#       One textured plane with 3x3 affines for frame 1 and frame 2; layers
+#       are composited back-to-front by z.
+#   render_pair_and_flow(layers, canvas_hw, device, *, min_motion_px=None,
+#                        max_motion_px=None, motion_percentile=80.0,
+#                        apply_to_background=False)
+#       -> (I1 (3,H,W), I2 (3,H,W), flow (2,H,W), valid (H,W) bool), CPU.
+#       Forward flow is computed analytically from the affines on the
+#       top-most visible layer per pixel; `valid` marks pixels whose target
+#       stays in-frame and unoccluded. Motion bounds rescale each layer's
+#       relative affine so the chosen percentile of per-pixel displacement
+#       lands in [min, max] (background only when apply_to_background=True).
+#   synthesize_dataset(out_root, num_train, num_val, H, W, max_objects,
+#                      bg_pool, fg_pool, seed=1234, preview=0,
+#                      min_motion_px=None, max_motion_px=None)
+#       Writes NNNNNN_img1.png/_img2.png/_flow.flo/_valid.png/_meta.json under
+#       out_root/train|val plus train.txt/val.txt index files.
+#   write_flo(flow_hw2, path) - Middlebury .flo writer (magic 202021.25).
+#   FlyingStuffDataset(root, split='train')
+#       Loader for the generated structure. __getitem__ -> dict with
+#       img1/img2 (3,H,W in [0,1]), flow (2,H,W), valid (1,H,W in {0,1}).
+#       Rejects .flo files with a wrong magic number (ValueError).

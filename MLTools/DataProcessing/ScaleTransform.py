@@ -13,6 +13,12 @@ class RandomScale:
         upscale_algorithm="bilinear",
         p=1.0,
     ):
+        if min_scale <= 0:
+            raise ValueError(f"min_scale must be > 0, got {min_scale}")
+        if max_scale < min_scale:
+            raise ValueError(f"max_scale ({max_scale}) must be >= min_scale ({min_scale})")
+        if not (0.0 <= p <= 1.0):
+            raise ValueError(f"p must be in [0, 1], got {p}")
         self.min_scale = min_scale
         self.max_scale = max_scale
         self.p = p
@@ -21,12 +27,27 @@ class RandomScale:
         self.up_interp = self._to_interp(upscale_algorithm)
 
     def _to_interp(self, name):
-        return {
+        modes = {
             "nearest": InterpolationMode.NEAREST,
             "bilinear": InterpolationMode.BILINEAR,
             "bicubic": InterpolationMode.BICUBIC,
             "area": InterpolationMode.BOX,
-        }[name]
+        }
+        if name not in modes:
+            raise ValueError(f"Unknown interpolation '{name}'. Available: {sorted(modes.keys())}")
+        return modes[name]
+
+    @staticmethod
+    def _resize(img: torch.Tensor, size, interp):
+        # torchvision's tensor resize cannot do BOX ("area"); route that case
+        # through torch.nn.functional.interpolate(mode="area") instead.
+        if interp == InterpolationMode.BOX:
+            import torch.nn.functional as TF
+            batched = img.ndim == 3
+            x = img.unsqueeze(0) if batched else img
+            x = TF.interpolate(x.float(), size=size, mode="area").to(img.dtype)
+            return x.squeeze(0) if batched else x
+        return F.resize(img, size, interpolation=interp)
 
     def __call__(self, img: torch.Tensor) -> torch.Tensor:
         if self.p < 1.0 and random.random() > self.p: return img
@@ -42,9 +63,9 @@ class RandomScale:
         interp2 = self.down_interp if scale > 1.0 else self.up_interp
 
         # scale down / up
-        img = F.resize(img, (scaled_h, scaled_w), interpolation=interp1)
+        img = self._resize(img, (scaled_h, scaled_w), interp1)
         # scale back to original size
-        img = F.resize(img, (h, w), interpolation=interp2)
+        img = self._resize(img, (h, w), interp2)
 
         return img
 

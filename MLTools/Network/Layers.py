@@ -36,7 +36,8 @@ class AutoGroupNorm(nn.Module):
     @staticmethod
     def __select_group_num(num_channels, pref_channels_per_group, min_groups, max_groups):
         # Trying optimal case: num_channels divisible by pref_channels_per_group, groups within min-max range
-        natural = num_channels // pref_channels_per_group
+        # (floor to at least 1 group so the modulo checks below never divide by zero)
+        natural = max(1, num_channels // pref_channels_per_group)
         opt = _ensure_within_range(natural, min_groups, max_groups)
         if AutoGroupNorm.__validate_groups(num_channels, opt): return opt
         # Relax min-max constraint
@@ -177,8 +178,8 @@ class ResidualBlock(nn.Module):
         self.act = _make_act(act_factory)
         self.skip = nn.Identity() if (in_channels==out_channels and stride==1) else nn.Sequential(
                 nn.AvgPool2d(kernel_size=kernel_size, stride=stride, padding=padding) if stride > 1 else nn.Identity(),
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, bias=False, dtype=dtype) if in_channels != out_channels else nn.Identity(), 
-                norm_factory(out_channels) if in_channels != out_channels else nn.Identity() )
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, bias=False, dtype=dtype) if in_channels != out_channels else nn.Identity(),
+                _make_norm(norm_factory, out_channels) if in_channels != out_channels else nn.Identity() )
         if main_branch is None: raise RuntimeError(f"ResidualBlock requires callable factory (in_channels, out_channels, stride, dtype) passed as main branch, got {str(type(main_branch))}")
         self.main = main_branch(in_channels, out_channels, stride, dtype)
     def forward(self, x):
@@ -199,8 +200,8 @@ class Bottleneck(nn.Module):
             X:int = 1, stride:int = 1, padding_mode="zeros", dtype: torch.dtype = torch.float32, norm_factory = None, act_factory = None, conv_class=ConvNormAct):
         super().__init__()
         out_channels = out_channels if out_channels else in_channels
-        working_channels = int(out_channels*reduction)
-        
+        working_channels = max(1, int(out_channels*reduction))
+
         # Reduction
         reduction_layer = conv_class(in_channels, working_channels, kernel_size=1, norm_factory=norm_factory, act_factory=act_factory, dtype=dtype)
         

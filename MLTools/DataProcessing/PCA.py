@@ -24,10 +24,10 @@ class PCA(nn.Module):
         self.dtype = dtype
 
         # Learned parameters (moved by .to(device))
-        self.register_buffer("components_", None)                 # (D, K)
-        self.register_buffer("explained_variance_", None)         # (K,)  -- RATIOS (0..1)
-        self.register_buffer("explained_variance_values_", None)  # (K,)  -- raw eigenvalues (variances)
-        self.register_buffer("total_variance_", None)             # ()    -- sum of all eigenvalues
+        self.register_buffer("components_", None)          # (D, K)
+        self.register_buffer("explained_variance_", None)  # (K,)  -- raw eigenvalues (variances)
+        self.register_buffer("explained_ratio_", None)     # (K,)  -- ratios in [0, 1]
+        self.register_buffer("total_variance_", None)      # ()    -- sum of all eigenvalues
         self.fitted_ = False
 
     @torch.no_grad()
@@ -43,6 +43,8 @@ class PCA(nn.Module):
         """
         if X.dim() != 2:
             raise ValueError("X must be 2D (N, D).")
+        if batch_size <= 0:
+            raise ValueError("batch_size must be a positive integer.")
         N, D = X.shape
         if N < 2:
             raise ValueError("Need at least 2 samples to compute covariance.")
@@ -69,8 +71,8 @@ class PCA(nn.Module):
         evecs = evecs[:, idx]
 
         k = min(self.n_components, D)
-        self.components_ = evecs[:, :k]                 # (D, k)
-        self.explained_variance_ = evals[:k]     # raw variances for kept comps
+        self.components_ = evecs[:, :k].contiguous()    # (D, k)
+        self.explained_variance_ = evals[:k].contiguous()  # raw variances for kept comps
         self.total_variance_ = evals.sum()              # total variance across all features
 
         if self.total_variance_.item() > 0:
