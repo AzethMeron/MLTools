@@ -76,7 +76,26 @@ filters).
 | `tests/test_flyingstuff.py` | `.flo` IO, affine math, renderer flow correctness (analytic + photometric), motion bounds, loader. |
 | `tests/test_visualizer.py`, `tests/test_webhooks.py`, `tests/test_videoproc.py` | Charts/grids/PIL export; mocked Discord payloads; real video round-trips. |
 | `tests/test_package.py` | Import integrity, lazy optional dependencies, public name surface. |
+| `tests/test_autoencoder_example.py` | End-to-end integration (slow): runs `examples/autoencoder_tinyimagenet.py` as a subprocess against synthetic TinyImageNetFeatures-format data — full TrainingLoop + StandardScaler + scheduler + checkpoint/resume pipeline. |
 | `tests/test_stress.py` | The fuzz battery (slow): 25 seeded trials per component over hostile magnitudes, sizes and configurations. |
+
+## Real-data integration run
+
+`examples/autoencoder_tinyimagenet.py` trains an MLP autoencoder on the real
+TinyImageNet ResNet50 features (downloaded via
+`TinyImageNetFeatures.download()`, ~475 MB) using the library's own
+`TrainingLoop`, `StandardScaler`, `CosineAnnealingWithWarmup` and
+`Visualizer`. It asserts that reconstruction loss decreases and writes
+checkpoints, `summary.json` and a loss chart:
+
+```bash
+python examples/autoencoder_tinyimagenet.py --data-dir /tmp/tinf --out-dir /tmp/ae_run --epochs 8
+python examples/autoencoder_tinyimagenet.py --data-dir /tmp/tinf --out-dir /tmp/ae_run --epochs 8 --resume
+```
+
+Reference result (CPU, 8 epochs, 100k train / 10k val, bottleneck 128):
+test MSE 0.853 → 0.453 on standardized features, reconstruction R² 0.55,
+mean cosine similarity 0.74, monotonic improvement every epoch.
 
 ## Conventions for new tests
 

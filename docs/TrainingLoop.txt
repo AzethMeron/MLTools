@@ -14,6 +14,12 @@ Gotchas & best practices
 - The best checkpoint (best_path) is written on the FIRST measured epoch as
   the baseline, then re-written whenever quantify() improves by at least
   min_rel_improval (relative) over the best value so far.
+- Resuming with MORE epochs than the original run: load_checkpoint restores
+  the scheduler's state_dict verbatim, which includes its hyper-parameters
+  (e.g. CosineAnnealingLR's T_max). A cosine schedule that already annealed
+  to ~0 stays at ~0 for the extra epochs. If you extend a run, rebuild the
+  scheduler for the new horizon and override load_checkpoint to skip (or
+  remap) the saved scheduler state.
 
 # ============================================================
 # Helper classes (same module: MLTools.Utilities.TrainingUtils)
