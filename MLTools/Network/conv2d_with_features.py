@@ -21,6 +21,11 @@ class Conv2dWithFeatures(nn.Conv2d):
 
         # Everything below runs without gradient tracking
         with torch.no_grad():
+            if isinstance(self.padding, str):
+                raise NotImplementedError(
+                    f"include_features=True does not support string padding "
+                    f"('{self.padding}'); use an explicit int/tuple padding."
+                )
             # These are already tuples in nn.Conv2d, but normalize anyway for safety
             kH, kW = self.kernel_size if isinstance(self.kernel_size, tuple) else (self.kernel_size, self.kernel_size)
             dH, dW = self.dilation if isinstance(self.dilation, tuple) else (self.dilation, self.dilation)

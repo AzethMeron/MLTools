@@ -134,6 +134,8 @@ class PreloadedDataset(Dataset):
             if arr.ndim == 3 and arr.shape[0] in (1, 3, 4):  # CHW
                 arr = arr.permute(1, 2, 0).contiguous()
             np_arr = arr.numpy()
+            if np_arr.ndim == 3 and np_arr.shape[2] == 1:
+                np_arr = np_arr[:, :, 0]  # PIL rejects (H, W, 1); squeeze to grayscale
             return Image.fromarray(np_arr)
         if isinstance(x, np.ndarray):
             # Assume HWC or HW

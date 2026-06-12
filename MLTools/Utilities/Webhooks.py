@@ -1,7 +1,5 @@
 import io
-from PIL import Image
-
-import io
+import json
 import requests
 from typing import Optional, List, Dict, Any
 
@@ -45,7 +43,13 @@ class DiscordWebhook:
                         (f"upload_{i}.png", io.BytesIO(content), "application/octet-stream"),
                     )
                 )
-            resp = self.session.post(self.url, data=data, files=file_payload)
+            # Discord expects the JSON body under the 'payload_json' form field
+            # when using multipart; plain form fields cannot encode embeds.
+            resp = self.session.post(
+                self.url,
+                data={"payload_json": json.dumps(data)},
+                files=file_payload,
+            )
         else:
             resp = self.session.post(self.url, json=data)
 

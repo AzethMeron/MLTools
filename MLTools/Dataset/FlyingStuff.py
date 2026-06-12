@@ -192,7 +192,8 @@ class COCOPersonForeground(ForegroundDataset):
             split = 'train'
         img_dir = os.path.join(root, 'coco', f'{split}{year}')
         ann_file = os.path.join(root, 'coco', 'annotations', f'instances_{split}{year}.json')
-        self.ds = torchvision.datasets.CocoDetection(img_dir, ann_file, download=True)
+        # CocoDetection cannot download; images/annotations must already exist
+        self.ds = torchvision.datasets.CocoDetection(img_dir, ann_file)
         # cache person ids
         cats = self.ds.coco.loadCats(self.ds.coco.getCatIds())
         self.person_ids = [c['id'] for c in cats if c['name'] == 'person'] or [1]
@@ -426,11 +427,6 @@ def random_object_layer(fg: ForegroundSample, canvas_hw: Tuple[int,int]) -> Laye
     z = random.random()
     return Layer(tex=tex, alpha=alpha, A1=A1, A2=A2, z=z, pad_mode='zeros')
 
-    A1 = sample_affine()
-    A2 = sample_affine()
-    z = random.random()
-    return Layer(tex=tex, alpha=alpha, A1=A1, A2=A2, z=z, pad_mode='zeros')
-
 
 def background_layer(bg: Image.Image, canvas_hw: Tuple[int,int]) -> Layer:
     Hc, Wc = canvas_hw
@@ -453,13 +449,6 @@ def background_layer(bg: Image.Image, canvas_hw: Tuple[int,int]) -> Layer:
     A2 = sample_small_motion()
     return Layer(tex=tex, alpha=alpha, A1=A1, A2=A2, z=-1.0, pad_mode='border')
 
-    A1 = torch.eye(3, dtype=torch.float32)
-    A2 = sample_small_motion()
-    return Layer(tex=tex, alpha=alpha, A1=A1, A2=A2, z=-1.0, pad_mode='border')
-
-
-import torch
-import torch.nn.functional as F
 
 @torch.no_grad()
 def render_pair_and_flow(
@@ -543,8 +532,9 @@ def render_pair_and_flow(
         M = A_delta[:2, :2]
         t = A_delta[:2, 2]
 
-        I2 = torch.eye(2, dtype=M.dtype, device=M.device)
-        M_adj = I2 + alpha * (M - I2)   # linear blend of linear part
+        # Named eye2 to avoid shadowing the rendered frame tensor I2 above
+        eye2 = torch.eye(2, dtype=M.dtype, device=M.device)
+        M_adj = eye2 + alpha * (M - eye2)   # linear blend of linear part
         t_adj = alpha * t               # scale translation
 
         A_delta_adj = torch.eye(3, dtype=M.dtype, device=M.device)

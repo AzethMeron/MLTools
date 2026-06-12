@@ -143,13 +143,14 @@ class MNIST(Dataset):
             "t10k-labels-idx1-ubyte.gz",
         ]
 
+        base_url = url.rstrip("/")
         for fname in files:
-            url = url.rstrip("/") + "/" + fname
+            file_url = base_url + "/" + fname
             gz_path = out_dir / fname
             raw_path = out_dir / fname.replace(".gz", "")
             if not gz_path.exists() and not raw_path.exists():
                 print(f"Downloading {fname} ...")
-                urllib.request.urlretrieve(url, gz_path)
+                urllib.request.urlretrieve(file_url, gz_path)
             if gz_path.exists() and not raw_path.exists():
                 print(f"Decompressing {fname} ...")
                 with gzip.open(gz_path, "rb") as f_in, open(raw_path, "wb") as f_out:

@@ -93,6 +93,27 @@ Composable `nn.Module` layers and feature-pyramid networks with factory-based no
 
 *Use for:* running and monitoring training, caching intermediate results, logging, video frame pipelines, and reporting.
 
+## Documentation
+
+Verbose per-module reference docs live in [`docs/`](docs/) (`StandardScaler`,
+`PCA`/`IncrementalPCA`, `LetterBox`, `Transforms`, `Detections`, `Layers`,
+`Datasets`, `Utilities`, `TrainingLoop`, `FPN`).
+
+## Testing
+
+A formal pytest suite (typical, edge-case, randomized, and adversarial tests
+— no network access required) lives in [`tests/`](tests/); see
+[TESTING.md](TESTING.md) for setup and usage:
+
+```bash
+pip install pytest matplotlib requests
+pytest                  # full suite
+pytest -m "not slow"    # fast subset
+```
+
+The June 2026 correctness audit and its findings are documented in
+[AUDIT.md](AUDIT.md).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

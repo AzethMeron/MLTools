@@ -2,7 +2,7 @@ import os
 import json
 from pathlib import Path
 import copy
-import urllib
+import urllib.request
 
 import numpy as np
 from PIL import Image
@@ -125,33 +125,34 @@ class DetectionDataset(Dataset):
         self.fill = fill
         self.__pregenerated = self.__pregenerate() if generate_once else None
 
+    @staticmethod
+    def __sample_range(spec, default):
+        """Sample from None | scalar x -> U(-x, x) | (lo, hi) -> U(lo, hi).
+
+        Accepts ints and floats interchangeably; lists work like tuples.
+        """
+        if spec is None:
+            return default
+        if isinstance(spec, (tuple, list)):
+            if len(spec) != 2:
+                raise ValueError(f"Range spec must have exactly 2 elements, got {spec}")
+            return np.random.uniform(float(spec[0]), float(spec[1]))
+        if isinstance(spec, (int, float)):
+            mag = abs(float(spec))
+            if mag == 0.0:
+                return default
+            return np.random.uniform(-mag, mag)
+        raise TypeError(f"Expected None, number or 2-element tuple/list, got {type(spec)}")
+
     def __get_augmented_data(self, idx):
         image, raw_detections = self.dataset[idx]
 
         # Roll a dice for flips, rotations and so on. Must be the same for image and detections
         do_flip_h = self.horizontal_flip is not None and np.random.rand() < self.horizontal_flip
         do_flip_v = self.vertical_flip is not None and np.random.rand() < self.vertical_flip
-        angle = (
-            np.random.randint(-self.rotate, self.rotate)
-            if isinstance(self.rotate, int) else
-            np.random.uniform(*self.rotate)
-            if isinstance(self.rotate, tuple) else
-            None
-        )
-        dx = (
-            np.random.uniform(-self.translate_w, self.translate_w)
-            if isinstance(self.translate_w, float) else
-            np.random.uniform(*self.translate_w)
-            if isinstance(self.translate_w, tuple) else
-            0
-        )
-        dy = (
-            np.random.uniform(-self.translate_h, self.translate_h)
-            if isinstance(self.translate_h, float) else
-            np.random.uniform(*self.translate_h)
-            if isinstance(self.translate_h, tuple) else
-            0
-        )
+        angle = self.__sample_range(self.rotate, default=None)
+        dx = self.__sample_range(self.translate_w, default=0)
+        dy = self.__sample_range(self.translate_h, default=0)
 
         # Original size of the image and size required by code - will be relevant later
         orig_W, orig_H = image.size

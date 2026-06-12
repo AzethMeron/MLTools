@@ -70,13 +70,18 @@ class StandardScaler(nn.Module):
         device = X.device
         X = X.to(dtype=self.dtype, copy=False)
         self._ensure_initialized(D, device)
+        if self.mean_.shape[0] != D:
+            raise ValueError(
+                f"X has D={D} features, but scaler was initialized with D={self.mean_.shape[0]}."
+            )
 
         # Per-batch stats
         batch_mean = X.mean(dim=0)  # (D,)
         # Sum of squared deviations within the batch: Σ (x - mean)^2
-        # Use the identity: sum((x - mean)^2) = sum(x^2) - B * mean^2
-        sumsq = (X * X).sum(dim=0)
-        batch_m2 = sumsq - batch_mean * batch_mean * float(B)
+        # Two-pass form: cancellation-safe even when |mean| >> std,
+        # unlike the naive Σx² - B·mean² identity.
+        centered = X - batch_mean
+        batch_m2 = (centered * centered).sum(dim=0).clamp_(min=0.0)
 
         n_old = int(self.n_samples_seen_.item())
         if n_old == 0:
@@ -113,6 +118,8 @@ class StandardScaler(nn.Module):
         """
         if X.dim() != 2:
             raise ValueError("X must be 2D (N, D).")
+        if batch_size <= 0:
+            raise ValueError("batch_size must be a positive integer.")
         N, D = X.shape
         if N < 1:
             raise ValueError("Need at least 1 sample to fit StandardScaler.")

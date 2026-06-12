@@ -154,7 +154,11 @@ class CIFAR10(Dataset):
         # Extract (creates 'cifar-10-batches-py' inside out_root)
         print(f"Extracting {tar_path} ...")
         with tarfile.open(tar_path, "r:gz") as tf:
-            tf.extractall(path=out_root)
+            try:
+                # Refuse path traversal / special members (Python >= 3.11.4)
+                tf.extractall(path=out_root, filter="data")
+            except TypeError:
+                tf.extractall(path=out_root)
         print(f"Extracted to {target_dir}")
 
         return target_dir

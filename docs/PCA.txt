@@ -31,6 +31,11 @@ Code examples handwritten, if provided.
 #       Total variance (sum of all eigenvalues).
 #   fitted_ (bool):
 #       Indicates whether the PCA has been successfully fit.
+#
+#   All four tensors above are registered buffers: they move with .to(device)
+#   and appear in state_dict(). Note that load_state_dict() requires the
+#   destination instance to already have allocated buffers (fit it once on
+#   dummy data of the right shape first), because unfitted buffers are None.
 # 
 # Methods:
 #   fit(X: torch.Tensor, batch_size: int = 64) -> PCA:
@@ -76,9 +81,14 @@ Code examples handwritten, if provided.
 #   - get_covariance(), get_precision(), reset()
 #
 # Overview:
-#   - Maintains exact first/second moments (S1 = sum x, S2 = sum x^T x).
+#   - Maintains *centered* streaming moments (running mean + scatter matrix
+#     M2 = sum (x-mean)(x-mean)^T), merged batch-by-batch with Chan's parallel
+#     update. Robust to large offsets (|mean| >> std) where raw-moment
+#     accumulation (sum x, sum x^T x) cancels catastrophically even in float64.
 #   - After each partial_fit, recomputes covariance eigenpairs.
 #   - Robust, simple, and device-agnostic (CPU/GPU).
+#   - fit(X) RESETS previously seen data (sklearn parity); use partial_fit
+#     to accumulate across calls.
 #
 # Args:
 #   n_components (int | None):
@@ -92,7 +102,7 @@ Code examples handwritten, if provided.
 #   device (torch.device | str | None):
 #       Device hosting parameters/accumulators. If None, inferred from first input.
 #   acc_dtype (torch.dtype):
-#       Accumulator precision for S1/S2 (default: torch.float64 for stability).
+#       Accumulator precision for the streaming moments (default: torch.float64).
 #   eps (float):
 #       Numerical epsilon used in whitening.
 #
@@ -127,8 +137,10 @@ Code examples handwritten, if provided.
 #       Reconstruct from component space back to feature space. Returns on Z.device/dtype.
 #
 #   get_covariance() -> torch.Tensor
-#       Approximate feature covariance:
-#         C ≈ components_.T diag(explained_variance_) components_ + noise_variance_ * I
+#       Approximate feature covariance (sklearn-compatible formula):
+#         C ≈ components_.T diag(max(explained_variance_ - noise, 0)) components_ + noise * I
+#       where noise = noise_variance_ (mean of the discarded eigenvalues).
+#       With n_components == n_features this equals the population covariance.
 #
 #   get_precision() -> torch.Tensor
 #       Return inverse covariance (precision) via pseudo-inverse for stability.

@@ -16,14 +16,20 @@ class Tee:
         self._primary = streams[0]
 
         # make libraries like tqdm happy
-        self.encoding = getattr(self._primary, "encoding", "utf-8")
+        # (some streams, e.g. io.StringIO, expose encoding=None — fall back too)
+        self.encoding = getattr(self._primary, "encoding", None) or "utf-8"
 
     # ---- core API ----
 
     def write(self, data):
+        primary_n = None
         for s in self._streams:
-            s.write(data)
+            n = s.write(data)
+            if s is self._primary:
+                primary_n = n
         self.flush()
+        # File protocol: report chars written (primary stream's count)
+        return primary_n if primary_n is not None else len(data)
 
     def flush(self):
         for s in self._streams:

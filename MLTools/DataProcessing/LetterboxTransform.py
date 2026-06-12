@@ -21,6 +21,11 @@ class Letterbox:
                  fill: Tuple[int, int, int] = (114, 114, 114),
                  device: str = "cpu"):
         self.tw, self.th = int(image_size[0]), int(image_size[1])
+        if self.tw < 1 or self.th < 1:
+            raise ValueError(f"image_size must be positive, got ({self.tw}, {self.th})")
+        fill = tuple(int(c) for c in fill)
+        if len(fill) != 3:
+            raise ValueError(f"fill must be an RGB triple, got {fill}")
         self.fill = fill
         self.device = torch.device(device)
 
@@ -31,9 +36,9 @@ class Letterbox:
 
         ow, oh = img_pil.size  # (W, H)
 
-        # Compute resize ratio
+        # Compute resize ratio; degenerate inputs still map to at least 1px
         r = min(self.th / oh, self.tw / ow)
-        nw, nh = int(round(ow * r)), int(round(oh * r))
+        nw, nh = max(1, int(round(ow * r))), max(1, int(round(oh * r)))
 
         # Convert PIL -> torch tensor [1,3,H,W]
         img = torch.frombuffer(bytearray(img_pil.tobytes()), dtype=torch.uint8)
@@ -48,25 +53,17 @@ class Letterbox:
         pad_w = self.tw - nw
         pad_h = self.th - nh
         left = pad_w // 2
-        right = pad_w - left
         top = pad_h // 2
-        bottom = pad_h - top
 
-        # Pad with constant fill
-        img = F.pad(img, (left, right, top, bottom), value=float(self.fill[0]))
-        if len(self.fill) == 3:
-            # Different R,G,B fill
-            for c in range(3):
-                if self.fill[c] != self.fill[0]:
-                    img[:, c:c+1] = F.pad(
-                        img[:, c:c+1],
-                        (left, right, top, bottom),
-                        value=float(self.fill[c])
-                    )
+        # Paste resized image onto a canvas pre-filled with the (per-channel) fill color
+        canvas = torch.empty((1, 3, self.th, self.tw), device=self.device, dtype=img.dtype)
+        for c in range(3):
+            canvas[:, c].fill_(float(self.fill[c]))
+        canvas[:, :, top:top + nh, left:left + nw] = img
 
         # Back to uint8 PIL.Image
-        img = img.clamp(0, 255).byte().squeeze(0).permute(1, 2, 0).cpu().numpy()
-        return Image.fromarray(img)
+        out = canvas.clamp(0, 255).byte().squeeze(0).permute(1, 2, 0).cpu().numpy()
+        return Image.fromarray(out)
 
     def __repr__(self):
         return f"{self.__class__.__name__}(size=({self.tw},{self.th}), fill={self.fill})"
@@ -87,7 +84,8 @@ class Letterbox:
         tw, th = self.tw, self.th
 
         r = min(th / oh, tw / ow)
-        nw, nh = int(round(ow * r)), int(round(oh * r))
+        # Keep the 1px clamp consistent with __call__ so boxes stay aligned
+        nw, nh = max(1, int(round(ow * r))), max(1, int(round(oh * r)))
 
         pad_w = tw - nw
         pad_h = th - nh

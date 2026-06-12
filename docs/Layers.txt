@@ -1,0 +1,160 @@
+Note: written during the 2026-06 audit, in the style of the existing docs.
+
+Factory conventions (used across MLTools.Network):
+  - act_factory:  zero-arg callable returning a fresh activation module,
+                  e.g. `lambda: nn.SiLU(inplace=True)`. None -> SiLU(inplace).
+  - norm_factory: one-arg callable (channels) returning a fresh norm module,
+                  e.g. `lambda c: nn.BatchNorm2d(c)`. None -> AutoGroupNorm.
+  - Passing an INSTANCE (e.g. nn.ReLU() or nn.BatchNorm2d(8)) instead of a
+    factory raises TypeError - modules must not be shared between layers.
+
+# ============================================================
+# Class: AutoGroupNorm
+# ============================================================
+# GroupNorm with automatic group-count selection.
+#
+# Args:
+#   num_channels (int): Channels to normalize.
+#   num_groups (int | None): Explicit group count; skips auto-selection.
+#   eps, affine, dtype: forwarded to nn.GroupNorm.
+#   pref_channels_per_group (int): Preferred channels per group (default 8).
+#   min_groups / max_groups (int): Allowed range for the group count.
+#
+# Selection algorithm (when num_groups is None):
+#   1. natural = max(1, num_channels // pref_channels_per_group), clamped to
+#      [min_groups, max_groups]. Used if it divides num_channels.
+#   2. Otherwise, if the unclamped `natural` divides num_channels, the range
+#      restriction is relaxed (UserWarning).
+#   3. Otherwise every group count in [min_groups, max_groups] is scanned and
+#      the valid one closest to `natural` is used (UserWarning).
+#   4. If nothing divides num_channels, RuntimeError.
+
+# ============================================================
+# Conv wrappers: PureConv, ConvNormAct, NormActConv
+# ============================================================
+# All three share the nn.Conv2d argument list (in_channels, out_channels,
+# kernel_size, stride, padding, dilation, groups, bias, padding_mode, dtype)
+# plus act_factory / norm_factory.
+#
+#   PureConv     = Conv2d only (factories accepted but ignored, so the
+#                  classes are interchangeable as `conv_class`).
+#   ConvNormAct  = Conv2d -> norm(out_channels) -> act     (post-activation)
+#   NormActConv  = norm(in_channels) -> act -> Conv2d      (pre-activation)
+
+# ============================================================
+# Class: SqueezeExciteBlock
+# ============================================================
+# Squeeze-and-Excitation channel attention.
+#   channels (int), rd_ratio (float, default 0.25; reduced width is
+#   max(1, round(channels * rd_ratio))), dtype, act_factory.
+# forward(x): x * sigmoid(MLP(global_avg_pool(x))) - shape preserved.
+
+# ============================================================
+# Class: CBAM
+# ============================================================
+# Convolutional Block Attention Module: channel attention (avg+max pooled
+# shared MLP) followed by spatial attention (channel-wise avg+max -> KxK conv).
+#
+# Args:
+#   channels (int), rd_ratio (float = 0.25), spatial_kernel (int = 7),
+#   dtype, act_factory, use_channel (bool = True), use_spatial (bool = True).
+# forward(x): gated tensor with identical shape. With both use_* False, the
+# input passes through unchanged.
+
+# ============================================================
+# Class: ResidualBlock
+# ============================================================
+# Generic residual wrapper: out = act(main(x) + skip(x)).
+#
+# Args:
+#   in_channels, out_channels (int)
+#   stride (int = 1): When > 1, the skip path downsamples with
+#       AvgPool2d(kernel_size, stride, padding). The MAIN branch must apply
+#       the same stride itself (it receives the stride as an argument).
+#   main_branch (Callable, REQUIRED): factory
+#       (in_channels, out_channels, stride, dtype) -> nn.Module.
+#       RuntimeError when omitted.
+#   act_factory / norm_factory: conventions above. The skip's 1x1 projection
+#       (used when in_channels != out_channels) is followed by
+#       _make_norm(norm_factory, out_channels) - works with the default None.
+#   kernel_size / padding (int = 3 / 1): parameters of the skip AvgPool2d.
+#
+# Example (bottleneck-style main branch):
+#   ResidualBlock(128, 128, main_branch=lambda ic, oc, s, dt: nn.Sequential(
+#       ConvNormAct(ic, ic // 2, kernel_size=3, padding=1),
+#       ConvNormAct(ic // 2, oc, kernel_size=3, padding=1,
+#                   act_factory=nn.Identity)))
+
+# ============================================================
+# Class: Bottleneck
+# ============================================================
+# Residual bottleneck: 1x1 reduce -> X * (3x3 conv) -> 1x1 expand, wrapped in
+# a ResidualBlock.
+#
+# Args:
+#   in_channels (int)
+#   out_channels (int | None): Defaults to in_channels.
+#   reduction (float = 0.5): working_channels = max(1, int(out * reduction)).
+#   X (int = 1): Number of 3x3 processing convs. X <= 0 emits UserWarning
+#       (and with stride > 1 the stride is silently impossible to apply,
+#       which will fail at the residual addition - the warning explains it).
+#   stride (int = 1): Applied on the first 3x3 conv (and the skip pool).
+#   conv_class: PureConv | ConvNormAct | NormActConv (default ConvNormAct).
+#       With NormActConv, the expansion becomes a plain Conv2d so the block
+#       ends linearly before the residual sum.
+#   padding_mode, dtype, norm_factory, act_factory: as usual.
+
+# ============================================================
+# Classes: PointwiseConv, DepthwiseConv
+# ============================================================
+# PointwiseConv(in_channels, out_channels, stride=1, ...) - 1x1 conv via
+#   conv_class (default ConvNormAct).
+# DepthwiseConv(channels, kernel_size=3, padding=1, X=1, stride=1, ...) -
+#   X stacked depthwise convs (groups=channels); stride applies to the first.
+
+# ============================================================
+# Classes: CSP1_X, CSP2_X
+# ============================================================
+# Cross-Stage-Partial blocks (YOLO-style).
+#   CSP1_X: main = 1x1 ConvNormAct -> X * Bottleneck -> 1x1 PureConv;
+#   CSP2_X: main = 1x1 ConvNormAct -> 3x3 ConvNormAct -> 2X * Bottleneck
+#           -> 1x1 PureConv;
+#   both: skip = 1x1 PureConv; concat(main, skip) -> norm -> act ->
+#         1x1 ConvNormAct to out_channels.
+#
+# Args (both):
+#   in_channels (int), working_channels (int): width of both internal branches
+#   out_channels (int | None = in_channels)
+#   X (int = 2): bottleneck count (CSP2_X uses R = 2*X)
+#   bottleneck_X (int = 1): processing convs inside each Bottleneck
+#   reduction (float = 0.5): bottleneck reduction
+#   padding_mode, norm_factory, act_factory, dtype, conv_class: as usual
+#       (conv_class reaches the internal Bottlenecks).
+
+# ============================================================
+# Class: Conv2dWithFeatures  (MLTools.Network.conv2d_with_features)
+# ============================================================
+# Drop-in nn.Conv2d subclass whose forward can also return the receptive-field
+# patches ("shared features") that produced each output pixel.
+#
+# forward(x, include_features=False)
+#   include_features=False -> identical to nn.Conv2d (gradients intact).
+#   include_features=True  -> (out, shared_feats) where
+#       out:          [B, C_out, H_out, W_out]   (with gradients)
+#       shared_feats: [B, H_out, W_out, C_in*kH*kW] (detached, moved to CPU,
+#                     computed under no_grad via F.unfold)
+#   String paddings ("same"/"valid") are rejected with NotImplementedError in
+#   the feature path; use explicit numeric padding.
+#
+# features_for_class_from_shared(shared_feats, class_id) -> Tensor
+#   Slices the part of shared_feats actually used by output channel
+#   `class_id`, handling grouped convolutions: returns
+#   [B, H_out, W_out, (C_in/groups)*kH*kW].
+#   Identity worth remembering (and tested):
+#       out[b, c, i, j] == features_for_class_from_shared(feats, c)[b, i, j]
+#                          . weight[c].flatten() + bias[c]
+#
+# Usage:
+#   conv = Conv2dWithFeatures(64, num_classes, kernel_size=1)
+#   logits, feats = conv(x, include_features=True)
+#   cls_feats = conv.features_for_class_from_shared(feats, class_id=3)

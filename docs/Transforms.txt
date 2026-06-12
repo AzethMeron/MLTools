@@ -1,0 +1,107 @@
+Note: written during the 2026-06 audit, in the style of the existing docs.
+
+# ============================================================
+# Class: RandomJPEGCompression  (MLTools.DataProcessing)
+# ============================================================
+# JPEG recompression augmentation using an in-memory buffer (PIL -> PIL).
+# Simulates compression artifacts (blocking, ringing, chroma bleeding) for
+# robustness training.
+#
+# Args:
+#   min_quality (int):
+#       Minimum JPEG quality. Must satisfy 1 <= min_quality <= max_quality <= 95,
+#       enforced with ValueError.
+#   max_quality (int):
+#       Maximum JPEG quality (inclusive). Quality is drawn uniformly from
+#       [min_quality, max_quality] per call.
+#   subsampling (int | list[int]):
+#       JPEG chroma subsampling: 0 = 4:4:4, 1 = 4:2:2, 2 = 4:2:0.
+#       A list means a random choice per call (drawn from the instance's own
+#       seeded RNG, so seeding stays reproducible).
+#   seed (int | None):
+#       Seed for the private random.Random instance. With the same seed and
+#       the same call sequence, results are bit-identical.
+#   p (float):
+#       Probability in [0, 1] of applying the compression. When the roll
+#       fails, the ORIGINAL image object is returned (identity, no copy).
+#
+# Behavior / Notes:
+#   - Input must be a PIL.Image (TypeError otherwise).
+#   - Modes JPEG can encode directly (L, RGB, CMYK) round-trip natively.
+#     Other modes (RGBA, P, LA, ...) are converted to RGB for the encode and
+#     converted back to the original mode afterwards. Alpha content is lost
+#     and restored as fully opaque - acceptable for augmentation, but do not
+#     rely on alpha surviving.
+#   - progressive=False, optimize=False for speed.
+#
+# Usage:
+#   t = RandomJPEGCompression(min_quality=25, max_quality=95, seed=42, p=0.5)
+#   img_aug = t(img)            # PIL in, PIL out
+
+
+# ============================================================
+# Class: RandomScale  (MLTools.DataProcessing)
+# ============================================================
+# Random rescale-then-restore augmentation for torch images (C, H, W).
+# Downscales (or upscales) by a random factor and resizes back to the
+# original resolution, simulating resolution loss / blur.
+#
+# Args:
+#   min_scale (float): Lower bound of the scale factor. Must be > 0.
+#   max_scale (float): Upper bound. Must be >= min_scale. Values > 1 are
+#       allowed (upscale-then-restore).
+#   downscale_algorithm (str): One of "nearest", "bilinear", "bicubic", "area".
+#       Used for the shrinking direction of each resize.
+#   upscale_algorithm (str): Same options; used for the enlarging direction.
+#   p (float): Probability in [0, 1] of applying the transform; on a failed
+#       roll the original tensor object is returned.
+#
+# Behavior / Notes:
+#   - Input must be a 3-D tensor (C, H, W); output has identical shape/dtype.
+#   - Scaled sizes are floored to at least 1 px, so extreme min_scale values
+#     on tiny images are safe.
+#   - "area" maps to true area interpolation: torchvision cannot apply BOX
+#     to tensors, so it is routed through F.interpolate(mode="area").
+#   - Uses the GLOBAL `random` module; seed with random.seed(...) if you
+#     need reproducibility.
+#
+# Usage:
+#   t = RandomScale(min_scale=0.25, max_scale=0.75,
+#                   downscale_algorithm="area", upscale_algorithm="bilinear", p=0.5)
+#   x_aug = t(x)                # (C,H,W) in, (C,H,W) out
+
+
+# ============================================================
+# Class: ParallelizedTransformer  (MLTools.DataProcessing)
+# ============================================================
+# Runs an arbitrary transform over a batch of items across persistent worker
+# processes ("spawn" context). Intended for inference-time preprocessing in a
+# model "platform" wrapper - NOT for training (DataLoader workers beat it
+# there).
+#
+# Args:
+#   transform (Callable): Picklable callable applied to each item. Must be
+#       importable in the spawned subprocess (module-level function or a
+#       picklable callable object - no lambdas).
+#   num_workers (int): Number of worker processes, >= 1 (ValueError otherwise).
+#
+# Public Methods:
+#   run(items: Sequence) -> list
+#       Distributes the items to the workers and returns the transformed
+#       results IN INPUT ORDER. If the transform raises inside any worker,
+#       run() raises RuntimeError in the parent, carrying the worker's
+#       formatted traceback (and chaining the original exception via
+#       __cause__). The queue is fully drained first, so workers stay healthy
+#       and the instance remains usable for subsequent run() calls.
+#
+# Lifecycle / Notes:
+#   - Workers are daemon processes; an atexit hook sends shutdown sentinels
+#     and joins them (1 s timeout each) at interpreter exit.
+#   - run() is not re-entrant: do not call it concurrently from multiple
+#     threads of the same instance.
+#
+# Usage:
+#   def preprocess(img):                # module-level, picklable
+#       return some_transform(img)
+#   pt = ParallelizedTransformer(preprocess, num_workers=4)
+#   batch_out = pt.run(batch_of_pil_images)
