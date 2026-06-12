@@ -247,3 +247,29 @@ def test_tiny_transform(tiny_dir):
     ds = TinyImageNet(root, train=True, transform=lambda im: im.size)
     size, _ = ds[0]
     assert size == (64, 64)
+
+
+# ================================================================ TinyImageNetFeatures
+
+def test_tiny_imagenet_features(tmp_path):
+    import torch
+    from MLTools.Dataset import TinyImageNetFeatures
+    from MLTools.Utilities import SaveBin
+
+    encoded = {
+        f"img_{i}.JPEG": (torch.full((4,), float(i)), np.eye(200, dtype=np.float32)[i])
+        for i in range(3)
+    }
+    blob = {
+        "wnid_to_id": {"n1": 0}, "id_to_wnid": {0: "n1"}, "id_to_class": {0: "cat"},
+        "encoded": encoded,
+    }
+    path = tmp_path / "features.bin"
+    SaveBin(str(path), blob)
+
+    ds = TinyImageNetFeatures(str(path))
+    assert len(ds) == 3
+    feats, onehot = ds[1]  # filenames sorted -> img_1
+    assert torch.equal(feats, torch.full((4,), 1.0))
+    assert onehot[1] == 1.0
+    assert ds.id_to_class[0] == "cat"
